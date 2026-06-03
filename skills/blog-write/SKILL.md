@@ -572,6 +572,78 @@ Steps:
 
 The orchestrator holds the loop counter; this sub-skill never loops itself.
 
+### Phase 7 ordering
+
+After Phase 6.5 passes, the next two phases run in order: Phase 7 (deliver
+the article locally — always runs) and Phase 7.5 (submit to qant — only
+runs when `--brand` is set, after local delivery).
+
+### Phase 7.5: Draft submission (only if `--brand` is set)
+
+After Phase 6.5 returns all gates passing AND a brand context was resolved
+in Phase 0.5, ship the draft to the brand's instance.
+
+1. **Build the payload** from article state into a JSON object matching the
+   spec at `/Users/adam/Projects/qant/docs/superpowers/specs/2026-06-03-blog-module-restructure-design.md`:
+
+   ```json
+   {
+     "brand_slug": "<from Phase 0.5>",
+     "title": "<frontmatter title>",
+     "slug": "<frontmatter slug or derived from title>",
+     "category": "<frontmatter category or detected template>",
+     "target_keyword": "<primary keyword>",
+     "author": {
+       "slug": "<resolved author slug>",
+       "name": "<from bio.md H1>",
+       "byline": "<contents of byline.md>",
+       "bio": "<contents of bio.md>"
+     },
+     "hero_image_url": "<frontmatter coverImage / ogImage>",
+     "og": { "title": "...", "description": "...", "image": "..." },
+     "body_markdown": "<the rendered .md, frontmatter stripped>",
+     "flow_score": <Phase 6.5 score>,
+     "metadata": { /* word count, reading time, tags, source list */ }
+   }
+   ```
+
+   Write the payload JSON to `<draft-folder>/submission.json`.
+
+2. **Decide whether to submit**:
+   - `--no-submit` → write `submission.json`, skip the POST, tell the user
+     where the file lives.
+   - `--staging` → submit by default. No prompt.
+   - `--development` → DO NOT submit by default. Ask: "Submit to dev
+     instance? (y/N)".
+   - default (no env flag) → ask: "Submit to instance? (y/n)".
+
+3. **Submit**:
+   ```bash
+   python3 scripts/submit_draft.py \\
+       --api-url "<api_url from Phase 0.5>" \\
+       --brand-key "<brand_key from Phase 0.5>" \\
+       --brand-slug "<brand_slug from Phase 0.5>" \\
+       --payload "<draft-folder>/submission.json"
+   ```
+   The script returns the draft id on stdout (JSON: `{"draft_id": "...",
+   "status": "draft"}`). Report the draft id and a link hint to the user
+   ("visible in the staging instance Blog module → Drafts").
+
+   Never print the brand_key in chat output. If diagnostics require
+   showing the resolved env, surface only `api_url`, `brand_slug`, and the
+   draft folder path.
+
+4. **On failure**: surface the script's stderr verbatim, write the
+   payload to `<draft-folder>/submission.json` (so the user can retry
+   manually), and report the failure as a non-fatal warning. The article
+   is still complete locally; submission can be retried with:
+
+   ```bash
+   python3 scripts/submit_draft.py \\
+       --api-url <url> --brand-key <key> --brand-slug <slug> \\
+       --payload <draft-folder>/submission.json
+   ```
+
 ### Phase 7: Delivery
 
 Present the completed article ONLY after Phase 6.5 returns all gates passing. Include the screenshots from `<folder>/preview/*.png` in the summary so the user can see what they are getting before reading the prose.

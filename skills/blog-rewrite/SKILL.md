@@ -379,6 +379,40 @@ Steps:
 
 Rewrites have a higher implicit threshold because the existing draft was presumably already published. Re-presenting something worse than the original is not acceptable. If the rewritten score is lower than the original score, that itself is a P0 condition.
 
+## Phase 5.6: Draft submission (only if `--brand` is set)
+
+After Phase 5.5 returns all gates passing AND a brand context was resolved
+in Phase 0.5 (see `skills/blog-write/SKILL.md` Phase 0.5 and 0.6 for the
+exact resolution and loading steps — `blog-rewrite` reuses them verbatim),
+ship the rewritten draft to the brand's instance using the same procedure
+as `blog-write` Phase 7.5:
+
+1. **Build the payload** to `<draft-folder>/submission.json` matching the
+   shape in `skills/blog-write/SKILL.md` Phase 7.5 step 1. For rewrites,
+   include the original post's slug if known so the receiving API can link
+   the new draft to the published predecessor (via `metadata.replaces_slug`).
+
+2. **Decide whether to submit**:
+   - `--no-submit` → write `submission.json`, skip the POST.
+   - `--staging` → submit by default. No prompt.
+   - `--development` → DO NOT submit by default. Ask: "Submit to dev
+     instance? (y/N)".
+   - default → ask: "Submit to instance? (y/n)".
+
+3. **Submit**:
+   ```bash
+   python3 scripts/submit_draft.py \\
+       --api-url "<api_url from Phase 0.5>" \\
+       --brand-key "<brand_key from Phase 0.5>" \\
+       --brand-slug "<brand_slug from Phase 0.5>" \\
+       --payload "<draft-folder>/submission.json"
+   ```
+   Report the returned draft id. Never print `brand_key`.
+
+4. **On failure**: surface stderr verbatim, leave `submission.json` for
+   retry, treat as a non-fatal warning. The rewrite is still complete
+   locally.
+
 ## Update Mode
 
 When invoked as `/blog update <file>`, focus on freshness:
