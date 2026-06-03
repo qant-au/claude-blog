@@ -34,6 +34,22 @@ and AI citation platforms. Preserves the author's voice while applying the
 
 For 21 evidence-led optimization prompts (AI-detector test, CTR audit, schema, PAA rewording, technical audit, ChatGPT visibility) directly applicable to rewrite work, see `/blog flow optimize`.
 
+## Flags
+
+`blog-rewrite` accepts the orchestrator-forwarded flags described in the
+parent `blog/SKILL.md` "Per-brand and per-author flags" section. Same shape
+as `blog-write`:
+
+| Flag | Effect on workflow |
+|------|--------------------|
+| `--brand <slug>` | Phase 0.5 resolves brand context; identity injected into the rewrite prompt; Phase 7 submits the rewritten draft to the brand's qant API. |
+| `--author <slug>` | Phase 0.6 loads the author bundle; `style.md` participates as a fenced untrusted-data block; `bio.md` is rendered into the article foot; `byline.md` populates frontmatter byline. |
+| `--staging` / `--development` | Selects the env file via `load_brand_context.py`. `--staging` defaults submission to YES; `--development` defaults it to NO. |
+| `--no-submit` | Skips the submission phase entirely. |
+
+See `skills/blog-write/SKILL.md` Phase 0.5 and 0.6 for the exact resolution
+and loading steps — the rewrite path applies the same procedure verbatim.
+
 ## Workflow
 
 ### Phase 1: Audit (Read-Only)
@@ -362,6 +378,40 @@ Steps:
 5. **Iterate on failure**: maximum 3 iterations. After the 3rd failure, STOP and present the diagnostic from `<folder>/preflight-report.json`.
 
 Rewrites have a higher implicit threshold because the existing draft was presumably already published. Re-presenting something worse than the original is not acceptable. If the rewritten score is lower than the original score, that itself is a P0 condition.
+
+## Phase 5.6: Draft submission (only if `--brand` is set)
+
+After Phase 5.5 returns all gates passing AND a brand context was resolved
+in Phase 0.5 (see `skills/blog-write/SKILL.md` Phase 0.5 and 0.6 for the
+exact resolution and loading steps — `blog-rewrite` reuses them verbatim),
+ship the rewritten draft to the brand's instance using the same procedure
+as `blog-write` Phase 7.5:
+
+1. **Build the payload** to `<draft-folder>/submission.json` matching the
+   shape in `skills/blog-write/SKILL.md` Phase 7.5 step 1. For rewrites,
+   include the original post's slug if known so the receiving API can link
+   the new draft to the published predecessor (via `metadata.replaces_slug`).
+
+2. **Decide whether to submit**:
+   - `--no-submit` → write `submission.json`, skip the POST.
+   - `--staging` → submit by default. No prompt.
+   - `--development` → DO NOT submit by default. Ask: "Submit to dev
+     instance? (y/N)".
+   - default → ask: "Submit to instance? (y/n)".
+
+3. **Submit**:
+   ```bash
+   python3 scripts/submit_draft.py \\
+       --api-url "<api_url from Phase 0.5>" \\
+       --brand-key "<brand_key from Phase 0.5>" \\
+       --brand-slug "<brand_slug from Phase 0.5>" \\
+       --payload "<draft-folder>/submission.json"
+   ```
+   Report the returned draft id. Never print `brand_key`.
+
+4. **On failure**: surface stderr verbatim, leave `submission.json` for
+   retry, treat as a non-fatal warning. The rewrite is still complete
+   locally.
 
 ## Update Mode
 

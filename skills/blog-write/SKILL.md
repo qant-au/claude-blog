@@ -29,6 +29,18 @@ main `blog` skill's references directory, not in `blog-write/`):
 - `skills/blog/references/internal-linking.md`: Linking strategy and anchor text rules
 - `skills/blog/references/visual-media.md`: Image sourcing and chart styling
 
+## Flags
+
+`blog-write` accepts the orchestrator-forwarded flags described in the
+parent `blog/SKILL.md` "Per-brand and per-author flags" section:
+
+| Flag | Effect on workflow |
+|------|--------------------|
+| `--brand <slug>` | Phase 0.5 resolves brand context; brand identity is injected into the drafting prompt; Phase 7.5 submits the finished draft to the brand's qant API. |
+| `--author <slug>` | Phase 0.6 loads the author bundle; `style.md` participates as a fenced untrusted-data block; `bio.md` is rendered into the article foot; `byline.md` populates the frontmatter author byline. |
+| `--staging` / `--development` | Selects the env file via `load_brand_context.py`. `--staging` defaults submission to YES; `--development` defaults it to NO. |
+| `--no-submit` | Skips Phase 7.5 entirely. |
+
 ## Workflow
 
 ### Phase 0: Surface Targeting (do this BEFORE research)
@@ -50,6 +62,53 @@ in `/blog repurpose`).
 
 For a deeper surface-by-surface workflow, see
 `skills/blog/references/flow-alignment.md` and `/blog flow find`.
+
+### Phase 0.5: Brand context resolution (only if `--brand` is set)
+
+1. Resolve the brand context once at the start of the run:
+   ```bash
+   python3 scripts/load_brand_context.py --brand <slug> [--staging|--development]
+   ```
+   The JSON payload contains `brand_slug`, `brand_dir`, `env_file`,
+   `brand_key`, `api_url`, and `brand_identity` (display_name, canonical,
+   target_keywords, optional primary_author).
+2. Stash `brand_key` and `api_url` in a holding variable for Phase 7.5. Do
+   NOT echo `brand_key` to chat or write it into the article.
+3. Inject `brand_identity` (display_name, canonical, target_keywords) into
+   the drafting prompt as a small structured block. This is in addition to
+   any project-root `BRAND.md` / `VOICE.md` already auto-loaded.
+4. If `brand_identity.primary_author` is present and `--author` was NOT
+   passed, treat the `primary_author` value as the resolved author slug
+   and continue to Phase 0.6. Otherwise, if no `--author` was passed, prompt
+   the user.
+
+If the brand directory or env file is missing, fail fast and surface the
+error from `load_brand_context.py`.
+
+### Phase 0.6: Author bundle load (only if author slug resolved)
+
+1. Verify the author directory exists: `skills/blog/authors/<slug>/`.
+2. Load `style.md` via the same fenced-untrusted-data contract used for
+   `VOICE.md`:
+   ```bash
+   HELPER="<resolved load_untrusted_root.py path per blog/SKILL.md>"
+   python3 "$HELPER" --allow-any-basename skills/blog/authors/<slug>/style.md
+   ```
+   The `--allow-any-basename` flag is required because `style.md` is not in
+   the BRAND.md / VOICE.md / DISCOURSE.md allowlist.
+3. Inject the fenced block into the writer agent's prompt. When both
+   `style.md` and project-root `VOICE.md` are present, the author's
+   `style.md` takes precedence on tone, sentence cadence, and banned-phrase
+   list — VOICE.md is the project default; the author bundle is the named
+   author's voice.
+4. Read `bio.md` and `byline.md` directly (small files, not security-fenced
+   — they are rendered into article output, not into the model's system
+   prompt as control text). Hold them for Phase 5 frontmatter and Phase 7
+   author-bio block.
+
+If the slug points at a missing directory, fail with a clear error listing
+the available author slugs (just list directory names under
+`skills/blog/authors/`).
 
 ### Phase 1: Topic Understanding
 
@@ -237,6 +296,11 @@ tags: ["keyword1", "keyword2", "keyword3"]
 
 If the platform uses a different field name (e.g., `image`, `hero`, `thumbnail`),
 adapt to match the project's existing frontmatter convention.
+
+When `--author <slug>` is set: derive the `author:` value from the first H1
+in `skills/blog/authors/<slug>/bio.md` (strip the `— Author Bio` suffix).
+Append the byline from `byline.md` as a secondary frontmatter field
+(`authorByline`) for downstream renderers that surface it.
 
 #### 5b. Summary Box (Key Takeaways)
 
@@ -507,6 +571,78 @@ Steps:
 5. **Iteration**: on any block, capture the failure diagnostic from `<folder>/preflight-report.json`, re-dispatch the blog-writer agent with the diagnostic as input, and re-run from step 1. Maximum 3 iterations. On the 3rd failure, STOP and present the failure diagnostic instead of the draft.
 
 The orchestrator holds the loop counter; this sub-skill never loops itself.
+
+### Phase 7 ordering
+
+After Phase 6.5 passes, the next two phases run in order: Phase 7 (deliver
+the article locally — always runs) and Phase 7.5 (submit to qant — only
+runs when `--brand` is set, after local delivery).
+
+### Phase 7.5: Draft submission (only if `--brand` is set)
+
+After Phase 6.5 returns all gates passing AND a brand context was resolved
+in Phase 0.5, ship the draft to the brand's instance.
+
+1. **Build the payload** from article state into a JSON object matching the
+   spec at `/Users/adam/Projects/qant/docs/superpowers/specs/2026-06-03-blog-module-restructure-design.md`:
+
+   ```json
+   {
+     "brand_slug": "<from Phase 0.5>",
+     "title": "<frontmatter title>",
+     "slug": "<frontmatter slug or derived from title>",
+     "category": "<frontmatter category or detected template>",
+     "target_keyword": "<primary keyword>",
+     "author": {
+       "slug": "<resolved author slug>",
+       "name": "<from bio.md H1>",
+       "byline": "<contents of byline.md>",
+       "bio": "<contents of bio.md>"
+     },
+     "hero_image_url": "<frontmatter coverImage / ogImage>",
+     "og": { "title": "...", "description": "...", "image": "..." },
+     "body_markdown": "<the rendered .md, frontmatter stripped>",
+     "flow_score": <Phase 6.5 score>,
+     "metadata": { /* word count, reading time, tags, source list */ }
+   }
+   ```
+
+   Write the payload JSON to `<draft-folder>/submission.json`.
+
+2. **Decide whether to submit**:
+   - `--no-submit` → write `submission.json`, skip the POST, tell the user
+     where the file lives.
+   - `--staging` → submit by default. No prompt.
+   - `--development` → DO NOT submit by default. Ask: "Submit to dev
+     instance? (y/N)".
+   - default (no env flag) → ask: "Submit to instance? (y/n)".
+
+3. **Submit**:
+   ```bash
+   python3 scripts/submit_draft.py \\
+       --api-url "<api_url from Phase 0.5>" \\
+       --brand-key "<brand_key from Phase 0.5>" \\
+       --brand-slug "<brand_slug from Phase 0.5>" \\
+       --payload "<draft-folder>/submission.json"
+   ```
+   The script returns the draft id on stdout (JSON: `{"draft_id": "...",
+   "status": "draft"}`). Report the draft id and a link hint to the user
+   ("visible in the staging instance Blog module → Drafts").
+
+   Never print the brand_key in chat output. If diagnostics require
+   showing the resolved env, surface only `api_url`, `brand_slug`, and the
+   draft folder path.
+
+4. **On failure**: surface the script's stderr verbatim, write the
+   payload to `<draft-folder>/submission.json` (so the user can retry
+   manually), and report the failure as a non-fatal warning. The article
+   is still complete locally; submission can be retried with:
+
+   ```bash
+   python3 scripts/submit_draft.py \\
+       --api-url <url> --brand-key <key> --brand-slug <slug> \\
+       --payload <draft-folder>/submission.json
+   ```
 
 ### Phase 7: Delivery
 

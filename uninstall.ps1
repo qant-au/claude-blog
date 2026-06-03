@@ -48,7 +48,8 @@ function Main {
     $ClaudeScriptsDir = Join-Path $env:USERPROFILE ".claude\scripts"
     $helperScripts = @("analyze_blog.py", "blog_preflight.py", "blog_render.py",
                         "cognitive_load.py", "discourse_research.py", "generate_hero.py",
-                        "load_untrusted_root.py", "lint_prose.py", "sync_flow.py")
+                        "load_brand_context.py", "load_untrusted_root.py", "lint_prose.py",
+                        "submit_draft.py", "sync_flow.py")
     foreach ($s in $helperScripts) {
         $scriptPath = Join-Path $ClaudeScriptsDir $s
         if (Test-Path $scriptPath) {
