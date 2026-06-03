@@ -62,6 +62,31 @@ Perplexity, Google AI Overviews, Gemini).
 | `/blog locale-audit <directory>` | Multilingual content QA (completeness, hreflang, parity, freshness) |
 | `/blog flow [find\|optimize\|win\|prompts\|sync]` | FLOW framework prompts (evidence-led, 30 blog-applicable) |
 
+## Per-brand and per-author flags (v1.10+)
+
+`/blog write` and `/blog rewrite` accept the following additional flags for
+brand- and author-aware drafting and submission. These are forwarded to the
+sub-skill as part of command routing:
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `--brand <slug>` | none | Resolves `/Users/adam/Projects/qant/brands/<slug>/` via `scripts/load_brand_context.py`. Injects brand identity (display_name, canonical, target_keywords) into the drafting prompt alongside `BRAND.md` / `VOICE.md`. Required for draft submission. |
+| `--author <slug>` | brand's `primary_author` if present in `.brand-seo.yml`, else prompt | Picks an author bundle under `skills/blog/authors/<slug>/`. Loads `style.md` (writing guide), `bio.md` (author bio block), and `byline.md` (one-liner). |
+| `--staging` | unset | Reads `.env.stg`. Default API URL: `https://api-stg.qant.au`. Submission defaults to YES (no prompt). |
+| `--development` | unset | Reads `.env.dev`. Default API URL: `http://localhost:8000`. Submission defaults to NO unless `--submit` is passed. |
+| `--no-submit` | unset | Skips the draft-submission phase entirely. Article ends up as a local markdown file only. |
+
+Resolution order for `--author`:
+1. Explicit `--author <slug>` argument.
+2. `.brand-seo.yml` `primary_author:` field (loaded by `load_brand_context.py`).
+3. Prompt the user.
+
+If `--brand` is set, the brand context is fetched once at the start of the
+command and threaded through drafting (identity into prompt) and submission
+(`brand_key` + `api_url` for the POST). The brand_key never appears in
+chat-visible output — when surfaced for debugging, use the `--redact-key`
+flag on `load_brand_context.py`.
+
 ## Orchestration Logic
 
 ### Command Routing
@@ -451,6 +476,21 @@ This contract exists because the auto-load pattern is the same indirect prompt-i
 If `BRAND.md` and / or `VOICE.md` exist at the project root, load their fenced contents at the start of any sub-skill that drafts, reviews, or scores content (`blog-write`, `blog-rewrite`, `blog-brief`, `blog-outline`, `blog-calendar`, `blog-strategy`, `blog-analyze`, `blog-audit`, `blog-geo`, `blog-cluster`, `blog-multilingual`). Users generate them with `/blog brand init` (see `skills/blog-brand/SKILL.md`).
 
 When both are present, BRAND.md takes precedence on positioning, audience, taboo phrases, and topic scope; VOICE.md takes precedence on tone, sentence ceiling, and pronoun stance. The structured `blog-persona` JSON remains the canonical source for programmatic enforcement (tone sliders, readability bands); VOICE.md is the human-readable mirror for cross-skill prompts.
+
+### Author-bundle scope (v1.10+)
+
+When `--author <slug>` is set on `blog-write` or `blog-rewrite`, three files
+under `skills/blog/authors/<slug>/` participate in cross-skill context:
+
+| File | Role |
+|------|------|
+| `bio.md` | Author bio block injected into the rendered article foot and the draft submission payload (`author.bio`). |
+| `style.md` | Writing-style guide. Loaded into the drafting prompt as a fenced untrusted-data block (same `load_untrusted_root.py` contract, invoked with `--allow-any-basename`). Takes precedence over `VOICE.md` when both are present. |
+| `byline.md` | One-liner byline string. Used in social previews and the `author.byline` payload field. |
+
+Author bundles checked into this repo are maintainer-trusted, but the loader
+still nonces and sanitizes them so the indirect-prompt-injection contract is
+uniform across all root-style inputs. See `skills/blog/authors/README.md`.
 
 ### DISCOURSE.md scope
 

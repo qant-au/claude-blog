@@ -34,6 +34,22 @@ and AI citation platforms. Preserves the author's voice while applying the
 
 For 21 evidence-led optimization prompts (AI-detector test, CTR audit, schema, PAA rewording, technical audit, ChatGPT visibility) directly applicable to rewrite work, see `/blog flow optimize`.
 
+## Flags
+
+`blog-rewrite` accepts the orchestrator-forwarded flags described in the
+parent `blog/SKILL.md` "Per-brand and per-author flags" section. Same shape
+as `blog-write`:
+
+| Flag | Effect on workflow |
+|------|--------------------|
+| `--brand <slug>` | Phase 0.5 resolves brand context; identity injected into the rewrite prompt; Phase 7 submits the rewritten draft to the brand's qant API. |
+| `--author <slug>` | Phase 0.6 loads the author bundle; `style.md` participates as a fenced untrusted-data block; `bio.md` is rendered into the article foot; `byline.md` populates frontmatter byline. |
+| `--staging` / `--development` | Selects the env file via `load_brand_context.py`. `--staging` defaults submission to YES; `--development` defaults it to NO. |
+| `--no-submit` | Skips the submission phase entirely. |
+
+See `skills/blog-write/SKILL.md` Phase 0.5 and 0.6 for the exact resolution
+and loading steps — the rewrite path applies the same procedure verbatim.
+
 ## Workflow
 
 ### Phase 1: Audit (Read-Only)

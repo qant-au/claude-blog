@@ -29,6 +29,18 @@ main `blog` skill's references directory, not in `blog-write/`):
 - `skills/blog/references/internal-linking.md`: Linking strategy and anchor text rules
 - `skills/blog/references/visual-media.md`: Image sourcing and chart styling
 
+## Flags
+
+`blog-write` accepts the orchestrator-forwarded flags described in the
+parent `blog/SKILL.md` "Per-brand and per-author flags" section:
+
+| Flag | Effect on workflow |
+|------|--------------------|
+| `--brand <slug>` | Phase 0.5 resolves brand context; brand identity is injected into the drafting prompt; Phase 7.5 submits the finished draft to the brand's qant API. |
+| `--author <slug>` | Phase 0.6 loads the author bundle; `style.md` participates as a fenced untrusted-data block; `bio.md` is rendered into the article foot; `byline.md` populates the frontmatter author byline. |
+| `--staging` / `--development` | Selects the env file via `load_brand_context.py`. `--staging` defaults submission to YES; `--development` defaults it to NO. |
+| `--no-submit` | Skips Phase 7.5 entirely. |
+
 ## Workflow
 
 ### Phase 0: Surface Targeting (do this BEFORE research)
@@ -50,6 +62,53 @@ in `/blog repurpose`).
 
 For a deeper surface-by-surface workflow, see
 `skills/blog/references/flow-alignment.md` and `/blog flow find`.
+
+### Phase 0.5: Brand context resolution (only if `--brand` is set)
+
+1. Resolve the brand context once at the start of the run:
+   ```bash
+   python3 scripts/load_brand_context.py --brand <slug> [--staging|--development]
+   ```
+   The JSON payload contains `brand_slug`, `brand_dir`, `env_file`,
+   `brand_key`, `api_url`, and `brand_identity` (display_name, canonical,
+   target_keywords, optional primary_author).
+2. Stash `brand_key` and `api_url` in a holding variable for Phase 7.5. Do
+   NOT echo `brand_key` to chat or write it into the article.
+3. Inject `brand_identity` (display_name, canonical, target_keywords) into
+   the drafting prompt as a small structured block. This is in addition to
+   any project-root `BRAND.md` / `VOICE.md` already auto-loaded.
+4. If `brand_identity.primary_author` is present and `--author` was NOT
+   passed, treat the `primary_author` value as the resolved author slug
+   and continue to Phase 0.6. Otherwise, if no `--author` was passed, prompt
+   the user.
+
+If the brand directory or env file is missing, fail fast and surface the
+error from `load_brand_context.py`.
+
+### Phase 0.6: Author bundle load (only if author slug resolved)
+
+1. Verify the author directory exists: `skills/blog/authors/<slug>/`.
+2. Load `style.md` via the same fenced-untrusted-data contract used for
+   `VOICE.md`:
+   ```bash
+   HELPER="<resolved load_untrusted_root.py path per blog/SKILL.md>"
+   python3 "$HELPER" --allow-any-basename skills/blog/authors/<slug>/style.md
+   ```
+   The `--allow-any-basename` flag is required because `style.md` is not in
+   the BRAND.md / VOICE.md / DISCOURSE.md allowlist.
+3. Inject the fenced block into the writer agent's prompt. When both
+   `style.md` and project-root `VOICE.md` are present, the author's
+   `style.md` takes precedence on tone, sentence cadence, and banned-phrase
+   list — VOICE.md is the project default; the author bundle is the named
+   author's voice.
+4. Read `bio.md` and `byline.md` directly (small files, not security-fenced
+   — they are rendered into article output, not into the model's system
+   prompt as control text). Hold them for Phase 5 frontmatter and Phase 7
+   author-bio block.
+
+If the slug points at a missing directory, fail with a clear error listing
+the available author slugs (just list directory names under
+`skills/blog/authors/`).
 
 ### Phase 1: Topic Understanding
 
@@ -237,6 +296,11 @@ tags: ["keyword1", "keyword2", "keyword3"]
 
 If the platform uses a different field name (e.g., `image`, `hero`, `thumbnail`),
 adapt to match the project's existing frontmatter convention.
+
+When `--author <slug>` is set: derive the `author:` value from the first H1
+in `skills/blog/authors/<slug>/bio.md` (strip the `— Author Bio` suffix).
+Append the byline from `byline.md` as a secondary frontmatter field
+(`authorByline`) for downstream renderers that surface it.
 
 #### 5b. Summary Box (Key Takeaways)
 
