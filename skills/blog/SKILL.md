@@ -71,7 +71,7 @@ to the sub-skill as part of command routing:
 | Flag | Default | Effect |
 |------|---------|--------|
 | `--brand <slug>` | **prompt** | Resolves `/Users/adam/Projects/qant/brands/<slug>/` via `scripts/load_brand_context.py`. Injects brand identity (display_name, canonical, content scope) into the drafting prompt alongside `BRAND.md` / `VOICE.md`. **When omitted, Phase 0.5 enumerates `--list-brands` and prompts.** |
-| `--author <slug>` | **prompt with brand-level `content.default_author` highlighted** | Picks an author bundle under `<brand_dir>/authors/<slug>/` (brand-local, preferred) or `skills/blog/authors/<slug>/` (legacy fallback). Loads `style.md` (fenced writing guide) and `byline.md` (canonical name + byline). `bio.md` is upserted to a per-author Firestore doc — NOT embedded in every draft. |
+| `--author <slug>` | **prompt with brand-level `content.default_author` highlighted** | Resolves the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` via `scripts/load_brand_context.py --list-authors --brand <slug>`. The Firestore doc carries every field — `name`, `byline`, `bio`, `writing_style`, plus the structured-voice columns (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post; create / edit / delete authors via the Blog Manager UI in the consumer app instead. |
 | `--no-submit` | unset | Skips the draft-submission phase entirely. Article ends up as a local markdown file only. |
 
 There is no `--staging` / `--development` flag. The new submission path
@@ -92,9 +92,13 @@ Resolution order for `--brand`:
 3. Otherwise prompt the user with a numbered list.
 
 Resolution order for `--author`:
-1. Explicit `--author <slug>` argument.
-2. Otherwise prompt the user, defaulting to
-   `brand_identity.content.default_author` (or legacy
+1. Explicit `--author <slug>` argument. The skill verifies the slug
+   exists in `qant-blog-drafts.brands/{brand_slug}/authors/` before
+   continuing; if it doesn't, the skill stops and asks the operator to
+   create the author via the Blog Manager UI first.
+2. Otherwise prompt the user with the list returned by
+   `scripts/load_brand_context.py --list-authors --brand <slug>`,
+   defaulting to `brand_identity.content.default_author` (or legacy
    `brand_identity.primary_author`) on empty stdin.
 
 ## Orchestration Logic

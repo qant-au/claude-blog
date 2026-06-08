@@ -28,11 +28,18 @@ happens to be testing today.
 plan / categories / url_pattern / default_author). PyYAML is not a
 dependency.
 
-Author auto-discovery
-─────────────────────
-Each brand directory may contain an ``authors/<slug>/`` subdir holding
-``bio.md``, ``style.md``, ``byline.md`` for that author. The loader lists
-the available slugs in the output as ``authors``.
+Authors
+───────
+Authors live in the ``qant-blog-drafts`` Firestore project under
+``brands/{brand_slug}/authors/*`` (managed via the Blog Manager UI in the
+consumer app). The on-disk ``brands/<slug>/authors/`` bundles were
+retired in Phase F-post; the brand-context loader no longer enumerates
+them.
+
+The ``--list-authors --brand <slug>`` mode hits qant-blog-drafts directly
+and emits ``[{slug, name, byline}, ...]`` for the skill's author picker.
+Requires ``QANT_BLOG_DRAFTS_PROJECT_ID`` + ``QANT_BLOG_DRAFTS_WRITER_KEY``
+to be set (same env vars the draft-submitter uses).
 
 Brand enumeration
 ─────────────────
@@ -43,6 +50,7 @@ for the interactive brand picker when ``--brand`` is omitted.
 Usage:
     python3 load_brand_context.py --brand redbridgecyber
     python3 load_brand_context.py --list-brands
+    python3 load_brand_context.py --list-authors --brand redbridgecyber
 
 Exits non-zero on:
 * unknown brand slug (directory missing)
@@ -53,6 +61,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -278,23 +287,15 @@ def load_brand_context(
             bd = canonical_marketing.split("://", 1)[-1]
             brand_domain = bd.rstrip("/").split("/", 1)[0]
 
-    # Brand-local author auto-discovery (Phase E E1). Lists subdirectory
-    # names under brands/<slug>/authors/.
-    authors: list[str] = []
-    authors_dir = brand_dir / "authors"
-    if authors_dir.is_dir():
-        authors = sorted(
-            p.name for p in authors_dir.iterdir()
-            if p.is_dir() and not p.name.startswith(".")
-        )
-
+    # Authors are no longer enumerated from disk (Phase F-post retired the
+    # brands/<slug>/authors/ bundles). Use --list-authors --brand <slug>
+    # to fetch the current list from qant-blog-drafts.
     return {
         "brand_slug": slug,
         "brand_dir": str(brand_dir),
         "env_file": str(env_file) if env_file else None,
         "brand_domain": brand_domain,
         "brand_identity": identity,
-        "authors": authors,
     }
 
 
@@ -320,6 +321,50 @@ def list_brands(brands_root: Path | None = None) -> list[dict[str, str]]:
     return out
 
 
+def list_authors_from_drafts(brand_slug: str) -> list[dict[str, str]]:
+    """Fetch ``brands/{brand_slug}/authors/*`` from qant-blog-drafts.
+
+    Returns ``[{slug, name, byline}, ...]`` sorted by slug. Used by the
+    skill's author picker when ``--author`` is omitted on ``/blog write``.
+
+    Env vars ``QANT_BLOG_DRAFTS_PROJECT_ID`` and ``QANT_BLOG_DRAFTS_WRITER_KEY``
+    are required (same pair the draft-submitter uses).
+    """
+    project_id = os.environ.get("QANT_BLOG_DRAFTS_PROJECT_ID")
+    key_path   = os.environ.get("QANT_BLOG_DRAFTS_WRITER_KEY")
+    if not project_id or not key_path:
+        raise RuntimeError(
+            "QANT_BLOG_DRAFTS_PROJECT_ID and QANT_BLOG_DRAFTS_WRITER_KEY must "
+            "be set to list authors from qant-blog-drafts."
+        )
+    if not Path(key_path).is_file():
+        raise RuntimeError(
+            f"QANT_BLOG_DRAFTS_WRITER_KEY points at non-existent file: {key_path}"
+        )
+
+    try:
+        from google.cloud import firestore  # type: ignore[import-not-found]
+        from google.oauth2 import service_account  # type: ignore[import-not-found]
+    except ImportError as e:
+        raise RuntimeError(
+            f"google-cloud-firestore not installed ({e}). "
+            f"Install with: pip install google-cloud-firestore"
+        ) from None
+
+    creds  = service_account.Credentials.from_service_account_file(key_path)
+    client = firestore.Client(project=project_id, credentials=creds)
+    col = client.collection("brands").document(brand_slug).collection("authors")
+    out: list[dict[str, str]] = []
+    for snap in col.stream():
+        d = snap.to_dict() or {}
+        out.append({
+            "slug":   snap.id,
+            "name":   d.get("name") or snap.id,
+            "byline": d.get("byline") or "",
+        })
+    return sorted(out, key=lambda r: r["slug"])
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     mode = parser.add_mutually_exclusive_group(required=True)
@@ -333,6 +378,12 @@ def main() -> int:
         help="List every brand with a .brand-seo.yml as JSON [{slug, display_name}, ...]. Used by the /blog skill brand picker.",
     )
     parser.add_argument(
+        "--list-authors",
+        action="store_true",
+        help="With --brand: emit [{slug, name, byline}, ...] for that brand's "
+             "authors fetched from qant-blog-drafts (instead of the full brand context).",
+    )
+    parser.add_argument(
         "--brands-root",
         default=None,
         help="Override the brands root directory (for testing).",
@@ -343,6 +394,18 @@ def main() -> int:
 
     if args.list_brands:
         print(json.dumps(list_brands(brands_root), indent=2, sort_keys=True))
+        return 0
+
+    if args.list_authors:
+        if not args.brand:
+            print("Error: --list-authors requires --brand <slug>.", file=sys.stderr)
+            return 2
+        try:
+            authors = list_authors_from_drafts(args.brand)
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+        print(json.dumps(authors, indent=2, sort_keys=True))
         return 0
 
     try:

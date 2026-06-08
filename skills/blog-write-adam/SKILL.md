@@ -1,11 +1,11 @@
 ---
 name: blog-write-adam
 description: >
-  Thin alias for `/blog write` with `--author adam` preset. Routes to the
-  blog-write sub-skill with Adam Burgess's author bundle loaded
-  (skills/blog/authors/adam/{bio,style,byline}.md). Use when the user says
-  "write as Adam", "/blog-write-adam <topic>", or any equivalent shortcut
-  for Adam-authored content.
+  Thin alias for `/blog write` with `--author adam-burgess` injected.
+  Routes to the blog-write sub-skill with Adam Burgess's author record
+  loaded from qant-blog-drafts. Use when the user says "write as Adam",
+  "/blog-write-adam <topic>", or any equivalent shortcut for
+  Adam-authored content.
 user-invokable: true
 argument-hint: "<topic> [--brand <slug>] [--no-submit]"
 license: MIT
@@ -14,17 +14,14 @@ license: MIT
 # /blog-write-adam — Adam-authored article shortcut
 
 This skill is a thin alias. It delegates straight to `blog-write` with
-`--author adam` injected.
+`--author adam-burgess` injected.
 
 ## Behavior
 
 When invoked:
 
 1. Forward all user-supplied arguments to `blog-write` verbatim, EXCEPT:
-   - Inject `--author <slug>` if no `--author` flag was passed. The slug
-     defaults to `adam-burgess` when a `--brand` flag is also present
-     (brand-local convention introduced by QANT blog Phase E E1) and
-     falls back to `adam` (skill-local legacy slug) when no brand is set.
+   - Inject `--author adam-burgess` if no `--author` flag was passed.
    - Refuse with a clear error if `--author <other-slug>` was passed —
      this alias is specifically for Adam-authored content; the user
      should use `/blog write` directly to pick a different author.
@@ -32,18 +29,19 @@ When invoked:
 
 ## Effect
 
-* Phase 0.6 (author bundle load) tries `<brand_dir>/authors/<slug>/`
-  first (Phase E E1 brand-local layout), then falls back to
-  `skills/blog/authors/<slug>/`. `style.md` is loaded as a fenced
-  untrusted-data block and treats as the voice authority for the
-  drafting prompt.
-* Phase 5a (frontmatter) sets `author:` from `byline.md` frontmatter
-  `name:` field (canonical) and `authorByline:` from the `byline:`
-  field.
-* Phase 7 renders the bio block from `bio.md` into the local article
-  foot. Phase 7.5 writes the draft to the shared `qant-blog-drafts`
-  Firestore project, with `author: {slug, name}` only in the per-draft
-  doc — bio + byline live once on `brands/{brand_slug}/authors/{slug}`.
+* Phase 0.6 (author resolution) reads
+  `qant-blog-drafts.brands/{brand_slug}/authors/adam-burgess` —
+  the on-disk `brands/<slug>/authors/<slug>/` bundles were retired in
+  Phase F-post. If the author doc doesn't exist under the brand the
+  user picked, the skill stops and asks the operator to create it via
+  the Blog Manager UI in the consumer app first.
+* Phase 5a (frontmatter) sets `author:` from the Firestore doc's
+  `name` field and `authorByline:` from its `byline` field.
+* Phase 7 renders the bio block from the Firestore `bio` field into
+  the local article foot. Phase 7.5 writes the draft to
+  `qant-blog-drafts.brands/{brand_slug}/drafts/{auto_id}` with
+  `author: {slug, name}` only in the per-draft doc — bio + byline +
+  voice fields live once on `brands/{brand_slug}/authors/adam-burgess`.
 
 ## Pass-through arguments
 
@@ -57,14 +55,10 @@ All other `blog-write` flags work normally:
 
 ## Why this alias exists
 
-Adam is the only standing author in this repo today, and most posts will
-be written in his voice across multiple brand sites (adamburgess.me,
-PrimeProtocols.com, ABC Training, Red Bridge Cyber guest content). Typing
-`/blog-write-adam` is shorter than `/blog write --author adam` and easier
-to remember from inside any brand directory.
-
-If a future author bundle ships (see `skills/blog/authors/README.md`), a
-parallel `blog-write-<slug>` alias can be added with the same shape.
+Adam is the standing author across multiple brand sites
+(adamburgess.me, Red Bridge Cyber, PrimeProtocols.com, ABC Training).
+Typing `/blog-write-adam` is shorter than `/blog write --author
+adam-burgess` and easier to remember from inside any brand directory.
 
 ## Example
 
@@ -81,10 +75,10 @@ Expands to:
 ```
 
 End-to-end: brand context loaded via the env-precedence pick (`.env` →
-`.env.stg` → `.env.dev`), brand-local `adam-burgess` author bundle
-loaded from `brands/redbridgecyber/authors/adam-burgess/`, article
-drafted in Adam's voice, FLOW review run, author doc upserted at
-`brands/redbridgecyber/authors/adam-burgess` (if new or bundle changed),
-draft written to `brands/redbridgecyber/drafts/{auto_id}` via
-`submit_draft_firestore.py` (env-based SA auth — no per-brand bearer
-key), Firestore paths reported back.
+`.env.stg` → `.env.dev`), Adam's author record read from
+`qant-blog-drafts.brands/redbridgecyber/authors/adam-burgess`,
+article drafted in Adam's voice (using the Firestore doc's
+`writing_style` + structured-voice fields), FLOW review run, draft
+written to `qant-blog-drafts.brands/redbridgecyber/drafts/{auto_id}`
+via `submit_draft_firestore.py` (env-based SA auth — no per-brand
+bearer key), Firestore paths reported back.

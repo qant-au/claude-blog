@@ -37,7 +37,7 @@ parent `blog/SKILL.md` "Per-brand and per-author flags" section:
 | Flag | Effect on workflow |
 |------|--------------------|
 | `--brand <slug>` (optional) | Phase 0.5 resolves brand context (env + `.brand-seo.yml` `content:` block + author list); brand identity is injected into the drafting prompt; Phase 7.5 writes the draft to the shared `qant-blog-drafts` Firestore (one project for all brands; auth via two `QANT_BLOG_DRAFTS_*` env vars). **If omitted, Phase 0.5 prompts the user with a brand picker.** |
-| `--author <slug>` (optional) | Phase 0.6 loads the author bundle from `<brand_dir>/authors/<slug>/` (preferred) or `skills/blog/authors/<slug>/` (fallback); `style.md` participates as a fenced untrusted-data block; `byline.md` frontmatter populates the article's author byline; `bio.md` lives once on the per-author Firestore doc (not embedded in every draft). **If omitted, Phase 0.6 prompts the user with the brand-local author list, highlighting `content.default_author`.** |
+| `--author <slug>` (optional) | Phase 0.6 reads the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed via the Blog Manager UI in the consumer app). The Firestore doc carries `name`, `byline`, `bio`, `writing_style`, plus structured-voice fields (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. **If omitted, Phase 0.6 prompts the user with the author list from `--list-authors --brand <slug>`, highlighting `content.default_author`.** |
 | `--no-submit` | Skips Phase 7.5 entirely (article ends up local-only). |
 
 Note: there is no `--staging` / `--development` flag anymore. Drafts always go to the single `qant-blog-drafts` Firestore project regardless of which env the contributor's brand site happens to be wired to. The loader reads `.env`, `.env.stg`, `.env.dev` in precedence order — first existing file wins — to pick up `NEXT_PUBLIC_BRAND_DOMAIN`.
@@ -102,8 +102,9 @@ The JSON payload contains:
 - `brand_identity` — display_name, canonical, target_keywords, optional
   primary_author, **plus `content:` block** (audience, strategy, plan,
   categories[], url_pattern, default_author).
-- `authors` — list of brand-local author slugs (subdirs under
-  `<brand_dir>/authors/`).
+  (Authors are NOT included in this payload — fetch them separately via
+  `python3 scripts/load_brand_context.py --list-authors --brand <slug>`
+  in Phase 0.6.)
 
 Inject `brand_identity` (display_name, canonical, content block) into
 the drafting prompt as a small structured block. The `content` block is
@@ -116,12 +117,30 @@ error.
 
 ### Phase 0.6: Author resolution (interactive picker when `--author` omitted)
 
-**1. Resolve the author slug.**
+The on-disk `brands/<slug>/authors/` bundles were retired in Phase F-post.
+Authors live in `qant-blog-drafts.brands/{brand_slug}/authors/{slug}`,
+managed via the Blog Manager UI in the consumer app. Every author has
+a full Phase F shape: `name`, `byline`, `bio`, `writing_style`,
+`target_audience`, plus structured-voice fields (`locale`,
+`pronoun_stance`, `register`, `banned_phrases`, `signature_moves`).
 
-- If `--author <slug>` was passed → validate against the union of
-  brand-local `brand_context.authors` + skill-local
-  `skills/blog/authors/*`. If the slug doesn't appear in either, abort
-  with the available options.
+**1. List the authors for this brand.**
+
+```bash
+python3 scripts/load_brand_context.py --list-authors --brand <slug>
+```
+
+Returns `[{slug, name, byline}, ...]`. Requires
+`QANT_BLOG_DRAFTS_PROJECT_ID` + `QANT_BLOG_DRAFTS_WRITER_KEY` env vars
+to be set (the same pair the draft-submitter uses).
+
+**2. Resolve the author slug.**
+
+- If `--author <slug>` was passed → confirm the slug is in the
+  `--list-authors` output. If it isn't, stop and tell the operator:
+  "Author `<slug>` doesn't exist in qant-blog-drafts under brand
+  `<brand_slug>`. Create it via the Blog Manager UI in the consumer app
+  (Brands → <brand> → New Author) before re-running."
 
 - If `--author` was omitted → prompt the user. Build the list as:
 
@@ -136,41 +155,40 @@ error.
   (or, for legacy v1 schemas, `brand_identity.primary_author`). Empty
   stdin = take the default. Accept either the number or the slug.
 
-  If the brand has no `authors/` subdir (no brand-local bundles), fall
-  back to the skill-local list under `skills/blog/authors/`. Same prompt
-  shape.
+  If the brand has zero authors in qant-blog-drafts, stop with the
+  Blog Manager UI instruction above.
 
-**2. Locate the author bundle directory.**
+**3. Load the author doc fields.**
 
-- Try brand-local first: `<brand_dir>/authors/<slug>/`
-- Fall back to skill-local: `skills/blog/authors/<slug>/`
-- Hold the resolved absolute path as `<author_dir>` — Phase 7.5 passes
-  it to `submit_draft_firestore.py --author-bundle`.
+The Phase 0.6 author surface available to the drafting prompt comes
+straight from the Firestore doc — there's no longer a fenced
+untrusted-data load from disk. The skill reads:
 
-**3. Load `style.md` via the fenced-untrusted-data contract.**
+- `name` → article frontmatter `author:` + per-draft `author.name`.
+- `byline` → `authorByline` frontmatter.
+- `bio` → rendered into the article foot at render time (NOT in the
+  per-draft payload; it stays on the per-author doc).
+- `writing_style` → the freeform voice-block addendum. Concatenate
+  after the structured-voice block in the writer agent's prompt.
+- `locale` → article locale + spelling enforcement (en-AU →
+  Australian English, etc.).
+- `pronoun_stance` → injected as a hard directive in the writer-agent
+  prompt ("Write in [first-person singular | first-person plural |
+  third-person singular | third-person plural]").
+- `register` → tonal anchor ("[technical | professional |
+  conversational | sharp]").
+- `banned_phrases` → fail FLOW review (Phase 6) if any phrase appears.
+- `signature_moves` → soft bias in the writer-agent prompt.
+- `target_audience` → injected as a "you are writing for: ..." line.
 
-```bash
-HELPER="<resolved load_untrusted_root.py path per blog/SKILL.md>"
-python3 "$HELPER" --allow-any-basename <author_dir>/style.md
-```
+When project-root `VOICE.md` is also present, the author's structured
+fields + writing_style take precedence on tone, sentence cadence, and
+banned-phrase list — VOICE.md is the project default; the author doc
+is the named author's voice.
 
-The `--allow-any-basename` flag is required because `style.md` is not in
-the BRAND.md / VOICE.md / DISCOURSE.md allowlist.
-
-Inject the fenced block into the writer agent's prompt. When both
-`style.md` and project-root `VOICE.md` are present, the author's
-`style.md` takes precedence on tone, sentence cadence, and
-banned-phrase list — VOICE.md is the project default; the author
-bundle is the named author's voice.
-
-**4. Read `byline.md` frontmatter for the canonical author name.**
-
-The `name:` field becomes the article frontmatter `author:` value and
-the per-draft `author.name` field in the Phase 7.5 payload. The
-`byline:` field becomes the `authorByline` frontmatter and is stored on
-the per-author Firestore doc (NOT per-draft) by
-`submit_draft_firestore.py`. `bio.md` is similarly only stored on the
-per-author doc — do NOT embed it in the draft payload.
+Phase 7.5 only passes `--author <slug>` to `submit_draft_firestore.py` —
+the script re-reads the canonical name/byline from Firestore so the
+join key + UI label always match the live author doc.
 
 ### Phase 1: Topic Understanding
 
@@ -360,11 +378,10 @@ If the platform uses a different field name (e.g., `image`, `hero`, `thumbnail`)
 adapt to match the project's existing frontmatter convention.
 
 When an author is resolved (Phase 0.6): derive the `author:` value from
-`<author_dir>/byline.md`'s YAML frontmatter `name:` field (canonical
-source). Append the `byline:` field as a secondary frontmatter entry
-(`authorByline`) for downstream renderers. If `byline.md` lacks
-frontmatter (legacy bundles), fall back to the first H1 in `bio.md`
-(strip any `— Author Bio` suffix).
+the author doc's `name` field (canonical source — read from
+`qant-blog-drafts.brands/{brand_slug}/authors/{slug}`). Append the
+`byline` field as a secondary frontmatter entry (`authorByline`) for
+downstream renderers.
 
 The article frontmatter is the only place the FULL author bio appears
 in the local-delivery output. The submission payload's `author` field
@@ -675,12 +692,13 @@ in Phase 0.5, ship the draft to the brand's instance.
    ```
 
    `submit_draft_firestore.py` will:
-   - Upsert `brands/{brand_slug}/authors/{author_slug}` from the on-disk
-     bundle (bio + style + byline) with a content-hash check — no-op if
-     unchanged.
+   - Verify the author exists in
+     `qant-blog-drafts.brands/{brand_slug}/authors/{author_slug}` — fail
+     fast with a clear "create the author via the Blog Manager UI first"
+     message if it doesn't.
    - Drop any leaked `author.bio` / `author.byline` from the payload
      (with a stderr warning) and stamp the canonical `slug` / `name`
-     from `byline.md`.
+     read from the Firestore author doc.
    - Add producer-side telemetry (`brand_slug`, `contentType`,
      `submittedBy`, `submittedAt`, `keyId`) at write time.
 
@@ -704,7 +722,7 @@ in Phase 0.5, ship the draft to the brand's instance.
    ```bash
    python3 scripts/submit_draft_firestore.py \\
        --brand-slug "<brand_slug from Phase 0.5>" \\
-       --author-bundle "<author_dir from Phase 0.6>" \\
+       --author "<author_slug from Phase 0.6>" \\
        --payload "<draft-folder>/submission.json"
    ```
 
@@ -712,18 +730,15 @@ in Phase 0.5, ship the draft to the brand's instance.
 
    ```json
    {
-     "author_path":   "brands/<slug>/authors/<author_slug>",
-     "author_action": "created" | "updated" | "noop",
-     "draft_id":      "<auto-id>",
-     "draft_path":    "brands/<slug>/drafts/<auto-id>"
+     "author_path": "brands/<slug>/authors/<author_slug>",
+     "draft_id":    "<auto-id>",
+     "draft_path":  "brands/<slug>/drafts/<auto-id>"
    }
    ```
 
-   Report `draft_path` + `author_action` to the user ("draft written;
-   author record was a no-op / updated / created. Visible in the
-   consumer-app Blog module → Drafts once the consumer-side wiring
-   lands; meanwhile inspect in the Firebase console for project
-   `qant-blog-drafts`").
+   Report `draft_path` to the user ("draft written. Visible in the
+   consumer-app Blog Manager → Drafts; inspect in the Firebase console
+   for project `qant-blog-drafts` if needed").
 
    The legacy HTTP-based path (`scripts/submit_draft.py` POSTing to
    `${api_url}/private/blog/drafts` with a per-brand bearer key) is
@@ -738,15 +753,15 @@ in Phase 0.5, ship the draft to the brand's instance.
    ```bash
    python3 scripts/submit_draft_firestore.py \\
        --brand-slug <slug> \\
-       --author-bundle <author_dir> \\
+       --author <author_slug> \\
        --payload <draft-folder>/submission.json
    ```
 
-   Common failure modes: missing env vars (exit 2 — script prints the
-   plan-file pointer); SA key file missing (exit 2); author bundle dir
-   missing or missing one of the three required files (exit 2); IAM
-   denied (exit 1 with the google-cloud-firestore error); network
-   unreachable (exit 1).
+   Common failure modes: missing env vars (exit 2); SA key file missing
+   (exit 2); author slug not found in qant-blog-drafts (exit 2 — the
+   error tells the operator to create the author via the Blog Manager
+   UI first); IAM denied (exit 1 with the google-cloud-firestore
+   error); network unreachable (exit 1).
 
 ### Phase 7: Delivery
 

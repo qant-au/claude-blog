@@ -43,7 +43,7 @@ as `blog-write`:
 | Flag | Effect on workflow |
 |------|--------------------|
 | `--brand <slug>` | Phase 0.5 resolves brand context; identity injected into the rewrite prompt; Phase 7 submits the rewritten draft to the brand's qant API. |
-| `--author <slug>` | Phase 0.6 loads the author bundle; `style.md` participates as a fenced untrusted-data block; `bio.md` is rendered into the article foot; `byline.md` populates frontmatter byline. |
+| `--author <slug>` | Phase 0.6 reads the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed via the Blog Manager UI); `writing_style` + structured-voice fields shape the rewrite prompt; `bio` is rendered into the article foot; `byline` populates frontmatter byline. The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. |
 | `--staging` / `--development` | Selects the env file via `load_brand_context.py`. `--staging` defaults submission to YES; `--development` defaults it to NO. |
 | `--no-submit` | Skips the submission phase entirely. |
 
