@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-_No unreleased changes._
+### Added
+
+- `scripts/submit_draft_firestore.py`: QANT workflow path. Writes drafts to the shared `qant-blog-drafts` Firestore project via env-var-based service-account auth (`QANT_BLOG_DRAFTS_PROJECT_ID`, `QANT_BLOG_DRAFTS_WRITER_KEY`). Replaces the per-brand bearer-key HTTP path for QANT consumers; the legacy `submit_draft.py` remains for non-QANT consumers. Architecture rationale (credential blast radius split): `~/.claude/plans/please-review-the-work-harmonic-cosmos.md` § E3.
+- `[project.optional-dependencies] qant` in `pyproject.toml`: `google-cloud-firestore` + `google-auth` for the new submit path.
+- `scripts/load_brand_context.py`: parses the v2 `.brand-seo.yml content:` block (audience / strategy / plan / categories / url_pattern / default_author) and emits it nested under `brand_identity.content`. Auto-discovers brand-local author bundles under `<brand_dir>/authors/<slug>/` and emits the list as `authors`. Emits `brand_domain` (from `NEXT_PUBLIC_BRAND_DOMAIN`, falling back to a YAML-derived hostname).
+
+### Changed
+
+- `skills/blog-write/SKILL.md`: Phase 0.5 documents the new loader output (brand_domain, content block, authors list). Phase 0.6 author bundle lookup tries `<brand_dir>/authors/<slug>/` FIRST, falls back to `skills/blog/authors/<slug>/`. Phase 5a derives `author:` from `byline.md` frontmatter (canonical), falls back to `bio.md` H1 for legacy bundles. Phase 7.5 calls `submit_draft_firestore.py` instead of the HTTP `submit_draft.py`.
+- `skills/blog-write-adam/SKILL.md`: alias picks `--author adam-burgess` when `--brand` is set (Phase E E1 brand-local convention), `--author adam` otherwise (skill-local legacy). Updated submission flow narrative.
 
 ## [1.9.1] - 2026-05-18
 

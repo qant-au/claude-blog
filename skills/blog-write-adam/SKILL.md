@@ -21,7 +21,10 @@ This skill is a thin alias. It delegates straight to `blog-write` with
 When invoked:
 
 1. Forward all user-supplied arguments to `blog-write` verbatim, EXCEPT:
-   - Inject `--author adam` if no `--author` flag was passed.
+   - Inject `--author <slug>` if no `--author` flag was passed. The slug
+     defaults to `adam-burgess` when a `--brand` flag is also present
+     (brand-local convention introduced by QANT blog Phase E E1) and
+     falls back to `adam` (skill-local legacy slug) when no brand is set.
    - Refuse with a clear error if `--author <other-slug>` was passed —
      this alias is specifically for Adam-authored content; the user
      should use `/blog write` directly to pick a different author.
@@ -29,13 +32,17 @@ When invoked:
 
 ## Effect
 
-* Phase 0.6 (author bundle load) reads `skills/blog/authors/adam/style.md`
-  as a fenced untrusted-data block and treats it as the voice authority
-  for the drafting prompt.
-* Phase 5a (frontmatter) sets `author: Adam Burgess` and `authorByline`
-  from `byline.md`.
+* Phase 0.6 (author bundle load) tries `<brand_dir>/authors/<slug>/`
+  first (Phase E E1 brand-local layout), then falls back to
+  `skills/blog/authors/<slug>/`. `style.md` is loaded as a fenced
+  untrusted-data block and treats as the voice authority for the
+  drafting prompt.
+* Phase 5a (frontmatter) sets `author:` from `byline.md` frontmatter
+  `name:` field (canonical) and `authorByline:` from the `byline:`
+  field.
 * Phase 7 / 7.5 renders the bio block from `bio.md` and includes the
-  author object in the draft submission payload.
+  author object in the draft submission payload, which is written to the
+  shared `qant-blog-drafts` Firestore project.
 
 ## Pass-through arguments
 
@@ -71,11 +78,14 @@ Expands to:
 
 ```
 /blog write "Beginner cyber hygiene checklist for SMBs" \\
-    --author adam --brand redbridgecyber --staging
+    --author adam-burgess --brand redbridgecyber --staging
 ```
 
 End-to-end: brand context loaded from
-`/Users/adam/Projects/qant/brands/redbridgecyber/.env.stg`, Adam author
-bundle loaded, article drafted in Adam's voice, FLOW review run, payload
-POSTed to `https://api-stg.qant.au/private/blog/drafts` with the brand's
-bearer token, draft id reported back.
+`/Users/adam/Projects/qant/brands/redbridgecyber/.env.stg`, brand-local
+`adam-burgess` author bundle loaded (from
+`brands/redbridgecyber/authors/adam-burgess/`), article drafted in Adam's
+voice, FLOW review run, payload written to the shared `qant-blog-drafts`
+Firestore at `brands/redbridgecyber/drafts/{auto_id}` via
+`submit_draft_firestore.py` (env-based SA auth — no per-brand bearer
+key), Firestore doc path reported back.
