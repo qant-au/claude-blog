@@ -62,30 +62,40 @@ Perplexity, Google AI Overviews, Gemini).
 | `/blog locale-audit <directory>` | Multilingual content QA (completeness, hreflang, parity, freshness) |
 | `/blog flow [find\|optimize\|win\|prompts\|sync]` | FLOW framework prompts (evidence-led, 30 blog-applicable) |
 
-## Per-brand and per-author flags (v1.10+)
+## Per-brand and per-author flags (v1.10+, E4.5 shape)
 
-`/blog write` and `/blog rewrite` accept the following additional flags for
-brand- and author-aware drafting and submission. These are forwarded to the
-sub-skill as part of command routing:
+`/blog write` and `/blog rewrite` accept the following additional flags
+for brand- and author-aware drafting and submission. These are forwarded
+to the sub-skill as part of command routing:
 
 | Flag | Default | Effect |
 |------|---------|--------|
-| `--brand <slug>` | none | Resolves `/Users/adam/Projects/qant/brands/<slug>/` via `scripts/load_brand_context.py`. Injects brand identity (display_name, canonical, target_keywords) into the drafting prompt alongside `BRAND.md` / `VOICE.md`. Required for draft submission. |
-| `--author <slug>` | brand's `primary_author` if present in `.brand-seo.yml`, else prompt | Picks an author bundle under `skills/blog/authors/<slug>/`. Loads `style.md` (writing guide), `bio.md` (author bio block), and `byline.md` (one-liner). |
-| `--staging` | unset | Reads `.env.stg`. Default API URL: `https://api-stg.qant.au`. Submission defaults to YES (no prompt). |
-| `--development` | unset | Reads `.env.dev`. Default API URL: `http://localhost:8000`. Submission defaults to NO unless `--submit` is passed. |
+| `--brand <slug>` | **prompt** | Resolves `/Users/adam/Projects/qant/brands/<slug>/` via `scripts/load_brand_context.py`. Injects brand identity (display_name, canonical, content scope) into the drafting prompt alongside `BRAND.md` / `VOICE.md`. **When omitted, Phase 0.5 enumerates `--list-brands` and prompts.** |
+| `--author <slug>` | **prompt with brand-level `content.default_author` highlighted** | Picks an author bundle under `<brand_dir>/authors/<slug>/` (brand-local, preferred) or `skills/blog/authors/<slug>/` (legacy fallback). Loads `style.md` (fenced writing guide) and `byline.md` (canonical name + byline). `bio.md` is upserted to a per-author Firestore doc — NOT embedded in every draft. |
 | `--no-submit` | unset | Skips the draft-submission phase entirely. Article ends up as a local markdown file only. |
+
+There is no `--staging` / `--development` flag. The new submission path
+writes every draft to the single `qant-blog-drafts` Firestore project
+regardless of environment. The brand-context loader reads `.env` →
+`.env.stg` → `.env.dev` in precedence order (first existing file wins)
+to pick up `NEXT_PUBLIC_BRAND_DOMAIN`.
+
+Submission auth is via two env vars set on the contributor's machine:
+
+- `QANT_BLOG_DRAFTS_PROJECT_ID` (e.g. `qant-blog-drafts`)
+- `QANT_BLOG_DRAFTS_WRITER_KEY` (absolute path to writer SA JSON)
+
+Resolution order for `--brand`:
+1. Explicit `--brand <slug>` argument.
+2. If exactly one brand exists under `/Users/adam/Projects/qant/brands/`
+   with a `.brand-seo.yml` → auto-pick + announce.
+3. Otherwise prompt the user with a numbered list.
 
 Resolution order for `--author`:
 1. Explicit `--author <slug>` argument.
-2. `.brand-seo.yml` `primary_author:` field (loaded by `load_brand_context.py`).
-3. Prompt the user.
-
-If `--brand` is set, the brand context is fetched once at the start of the
-command and threaded through drafting (identity into prompt) and submission
-(`brand_key` + `api_url` for the POST). The brand_key never appears in
-chat-visible output — when surfaced for debugging, use the `--redact-key`
-flag on `load_brand_context.py`.
+2. Otherwise prompt the user, defaulting to
+   `brand_identity.content.default_author` (or legacy
+   `brand_identity.primary_author`) on empty stdin.
 
 ## Orchestration Logic
 

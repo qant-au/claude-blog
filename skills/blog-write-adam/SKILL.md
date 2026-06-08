@@ -7,7 +7,7 @@ description: >
   "write as Adam", "/blog-write-adam <topic>", or any equivalent shortcut
   for Adam-authored content.
 user-invokable: true
-argument-hint: "<topic> [--brand <slug>] [--staging|--development] [--no-submit]"
+argument-hint: "<topic> [--brand <slug>] [--no-submit]"
 license: MIT
 ---
 
@@ -40,9 +40,10 @@ When invoked:
 * Phase 5a (frontmatter) sets `author:` from `byline.md` frontmatter
   `name:` field (canonical) and `authorByline:` from the `byline:`
   field.
-* Phase 7 / 7.5 renders the bio block from `bio.md` and includes the
-  author object in the draft submission payload, which is written to the
-  shared `qant-blog-drafts` Firestore project.
+* Phase 7 renders the bio block from `bio.md` into the local article
+  foot. Phase 7.5 writes the draft to the shared `qant-blog-drafts`
+  Firestore project, with `author: {slug, name}` only in the per-draft
+  doc — bio + byline live once on `brands/{brand_slug}/authors/{slug}`.
 
 ## Pass-through arguments
 
@@ -51,9 +52,7 @@ All other `blog-write` flags work normally:
 | Flag | Effect |
 |------|--------|
 | `<topic>` | Required. The article topic. |
-| `--brand <slug>` | Resolves brand context, injects identity, enables submission. |
-| `--staging` | Reads `.env.stg`, defaults submission to YES. |
-| `--development` | Reads `.env.dev`, defaults submission to NO. |
+| `--brand <slug>` | Resolves brand context, injects identity, enables submission. When omitted, Phase 0.5 of `blog-write` prompts. |
 | `--no-submit` | Skips Phase 7.5 entirely. |
 
 ## Why this alias exists
@@ -71,21 +70,21 @@ parallel `blog-write-<slug>` alias can be added with the same shape.
 
 ```
 /blog-write-adam "Beginner cyber hygiene checklist for SMBs" \\
-    --brand redbridgecyber --staging
+    --brand redbridgecyber
 ```
 
 Expands to:
 
 ```
 /blog write "Beginner cyber hygiene checklist for SMBs" \\
-    --author adam-burgess --brand redbridgecyber --staging
+    --author adam-burgess --brand redbridgecyber
 ```
 
-End-to-end: brand context loaded from
-`/Users/adam/Projects/qant/brands/redbridgecyber/.env.stg`, brand-local
-`adam-burgess` author bundle loaded (from
-`brands/redbridgecyber/authors/adam-burgess/`), article drafted in Adam's
-voice, FLOW review run, payload written to the shared `qant-blog-drafts`
-Firestore at `brands/redbridgecyber/drafts/{auto_id}` via
+End-to-end: brand context loaded via the env-precedence pick (`.env` →
+`.env.stg` → `.env.dev`), brand-local `adam-burgess` author bundle
+loaded from `brands/redbridgecyber/authors/adam-burgess/`, article
+drafted in Adam's voice, FLOW review run, author doc upserted at
+`brands/redbridgecyber/authors/adam-burgess` (if new or bundle changed),
+draft written to `brands/redbridgecyber/drafts/{auto_id}` via
 `submit_draft_firestore.py` (env-based SA auth — no per-brand bearer
-key), Firestore doc path reported back.
+key), Firestore paths reported back.

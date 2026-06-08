@@ -1,63 +1,52 @@
 #!/usr/bin/env python3
-"""Resolve a qant brand directory and emit its env + identity as JSON.
+"""Resolve a qant brand directory and emit its identity + env as JSON.
 
-Used by `/blog write --brand <slug>` and `/blog rewrite --brand <slug>` to
-pick up the per-brand `BRAND_KEY` and `API_URL` needed to POST a finished
-draft to the qant private API, and to inject a small brand-identity block
-into the drafting prompt alongside `BRAND.md` / `VOICE.md`.
+Used by ``/blog write`` / ``/blog rewrite`` to inject brand identity into
+the drafting prompt and to surface the brand-local author list for the
+author picker. Phase E4.5 removed the env-flag selector and dropped the
+HTTP-submission auth (brand_key / api_url) from the output — the new
+submit path writes directly to the qant-blog-drafts Firestore project
+via env-var-based SA auth, not via the per-brand bearer key.
 
-Brand directories live at `/Users/adam/Projects/qant/brands/<slug>/`. Each
-contains:
+Brand directories live at ``/Users/adam/Projects/qant/brands/<slug>/``.
+Each contains:
 
-* `.env`, `.env.stg`, `.env.dev` — simple KEY=VALUE env files.
-* `.brand-seo.yml` — brand identity (display name, hosts, target keywords).
+* one of ``.env``, ``.env.stg``, ``.env.dev`` — simple KEY=VALUE env file.
+* ``.brand-seo.yml`` — brand identity (display name, hosts, content scope).
 
-Env file selection:
+Env file selection (E4.5 — flag removed)
+────────────────────────────────────────
+Tries ``.env`` → ``.env.stg`` → ``.env.dev`` in order and uses the first
+existing file. The only field the loader cares about from env now is
+``NEXT_PUBLIC_BRAND_DOMAIN`` (the canonical brand hostname). Brands run
+on a single canonical domain regardless of which staging URL the team
+happens to be testing today.
 
-* no flag       → `.env`
-* `--staging`   → `.env.stg`
-* `--development` → `.env.dev`
-
-Env file parsing handles `KEY=VALUE` lines, comments (`#`), blank lines, and
-optional surrounding quotes. It does NOT expand shell variables.
-
-Two key names are accepted for compatibility with the existing brand env
-files:
-
-* `BRAND_KEY` or `NEXT_PUBLIC_BRAND_KEY` → emitted as `brand_key`
-* `API_URL` (if absent, derived from `NEXT_PUBLIC_BRAND_ENV`: `stg` →
-  `https://api-stg.qant.au`, `prod` → `https://api.qant.au`, `dev` →
-  `http://localhost:8000`).
-
-`.brand-seo.yml` is parsed defensively with a minimal stdlib YAML reader
-(top-level scalars + the `canonical:` map + a `target_keywords:` list, plus
-a `primary_author:` slug if present, plus the v2 ``content:`` block —
-audience / strategy / plan / categories / url_pattern / default_author —
-introduced by the QANT blog Phase E E2 change). PyYAML is not a dependency;
-the loader extracts only the fields the blog skill needs and ignores
-everything else.
+``.brand-seo.yml`` is parsed defensively with a minimal stdlib YAML reader
+(top-level scalars + ``canonical:`` map + ``target_keywords:`` list +
+``primary_author:`` scalar + v2 ``content:`` block — audience / strategy /
+plan / categories / url_pattern / default_author). PyYAML is not a
+dependency.
 
 Author auto-discovery
 ─────────────────────
 Each brand directory may contain an ``authors/<slug>/`` subdir holding
 ``bio.md``, ``style.md``, ``byline.md`` for that author. The loader lists
-the available slugs in the output as ``authors``. The orchestrator looks
-up an author bundle in this brand-local directory FIRST, falling back to
-``claude-blog/skills/blog/authors/<slug>/`` only when the slug is not
-present under the brand.
+the available slugs in the output as ``authors``.
 
-The brand_key is treated as a secret: it is never logged to stderr, only
-returned on stdout as part of the JSON payload. Callers that do not need it
-(e.g. a dry-run) can pass `--redact-key` to receive `"brand_key": null`.
+Brand enumeration
+─────────────────
+``--list-brands`` emits ``[{slug, display_name}, ...]`` for every brand
+under the brands root that has a ``.brand-seo.yml``. The skill uses this
+for the interactive brand picker when ``--brand`` is omitted.
 
 Usage:
-    python3 load_brand_context.py --brand redbridgecyber --staging
-    python3 load_brand_context.py --brand redbridgecyber --staging --redact-key
+    python3 load_brand_context.py --brand redbridgecyber
+    python3 load_brand_context.py --list-brands
 
 Exits non-zero on:
 * unknown brand slug (directory missing)
-* missing env file
-* missing brand key in env file (cannot submit drafts without it)
+* no env file present (loader expected ``.env`` / ``.env.stg`` / ``.env.dev``)
 """
 
 from __future__ import annotations
@@ -70,14 +59,8 @@ from typing import Any
 
 QANT_BRANDS_ROOT = Path("/Users/adam/Projects/qant/brands")
 
-DEFAULT_API_URLS = {
-    "stg": "https://api-stg.qant.au",
-    "staging": "https://api-stg.qant.au",
-    "prod": "https://api.qant.au",
-    "production": "https://api.qant.au",
-    "dev": "http://localhost:8000",
-    "development": "http://localhost:8000",
-}
+# Tried in order; first existing file wins. Authoritative for the loader.
+ENV_FILE_PRECEDENCE: tuple[str, ...] = (".env", ".env.stg", ".env.dev")
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:
@@ -125,9 +108,11 @@ def _parse_brand_seo_yml(path: Path) -> dict[str, Any]:
     * `brand` (slug)
     * `display_name`
     * `country`
+    * `legal_entity`
+    * `primary_author`
     * `canonical.marketing` (top-level marketing URL)
     * `target_keywords` (list of strings, top-level)
-    * `primary_author` (string, top-level slug)
+    * `content.{audience,strategy,plan,categories,url_pattern,default_author}` (Phase E E2)
     """
     if not path.exists():
         return {}
@@ -248,56 +233,36 @@ def _parse_brand_seo_yml(path: Path) -> dict[str, Any]:
     return out
 
 
-def resolve_env_file(brand_dir: Path, staging: bool, development: bool) -> Path:
-    if staging and development:
-        raise ValueError("--staging and --development are mutually exclusive")
-    if staging:
-        return brand_dir / ".env.stg"
-    if development:
-        return brand_dir / ".env.dev"
-    return brand_dir / ".env"
+def resolve_env_file(brand_dir: Path) -> Path | None:
+    """Return the first existing env file under ``brand_dir`` per ENV_FILE_PRECEDENCE.
+
+    Returns None when no env file is present. The loader treats that as
+    a soft miss (brand_domain will be derived from the YAML's
+    canonical.marketing) rather than an error.
+    """
+    for fname in ENV_FILE_PRECEDENCE:
+        candidate = brand_dir / fname
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def load_brand_context(
     slug: str,
-    staging: bool = False,
-    development: bool = False,
+    *,
     brands_root: Path | None = None,
 ) -> dict[str, Any]:
     """Resolve the brand and return the context JSON-able dict.
 
-    Raises FileNotFoundError if the brand dir or env file does not exist.
-    Raises KeyError if no brand_key can be found in the env file.
+    Raises FileNotFoundError if the brand dir does not exist.
     """
     root = brands_root if brands_root is not None else QANT_BRANDS_ROOT
     brand_dir = root / slug
     if not brand_dir.is_dir():
         raise FileNotFoundError(f"brand directory not found: {brand_dir}")
 
-    env_file = resolve_env_file(brand_dir, staging, development)
-    if not env_file.is_file():
-        raise FileNotFoundError(f"env file not found: {env_file}")
-    env = _parse_env_file(env_file)
-
-    brand_key = env.get("BRAND_KEY") or env.get("NEXT_PUBLIC_BRAND_KEY")
-    if not brand_key:
-        raise KeyError(
-            f"no BRAND_KEY or NEXT_PUBLIC_BRAND_KEY in {env_file}"
-        )
-
-    api_url = env.get("API_URL") or env.get("NEXT_PUBLIC_API_URL")
-    if not api_url:
-        env_label = env.get("NEXT_PUBLIC_BRAND_ENV") or env.get("BRAND_ENV")
-        if env_label:
-            api_url = DEFAULT_API_URLS.get(env_label.lower())
-        if not api_url:
-            # Sensible default by flag.
-            if staging:
-                api_url = DEFAULT_API_URLS["stg"]
-            elif development:
-                api_url = DEFAULT_API_URLS["dev"]
-            else:
-                api_url = DEFAULT_API_URLS["prod"]
+    env_file = resolve_env_file(brand_dir)
+    env: dict[str, str] = _parse_env_file(env_file) if env_file else {}
 
     identity = _parse_brand_seo_yml(brand_dir / ".brand-seo.yml")
 
@@ -314,9 +279,7 @@ def load_brand_context(
             brand_domain = bd.rstrip("/").split("/", 1)[0]
 
     # Brand-local author auto-discovery (Phase E E1). Lists subdirectory
-    # names under brands/<slug>/authors/. The orchestrator looks here FIRST
-    # when resolving --author, falling back to skills/blog/authors/ only
-    # when the slug is not present brand-locally.
+    # names under brands/<slug>/authors/.
     authors: list[str] = []
     authors_dir = brand_dir / "authors"
     if authors_dir.is_dir():
@@ -328,25 +291,46 @@ def load_brand_context(
     return {
         "brand_slug": slug,
         "brand_dir": str(brand_dir),
-        "env_file": str(env_file),
-        "brand_key": brand_key,
-        "api_url": api_url,
+        "env_file": str(env_file) if env_file else None,
         "brand_domain": brand_domain,
         "brand_identity": identity,
         "authors": authors,
     }
 
 
+def list_brands(brands_root: Path | None = None) -> list[dict[str, str]]:
+    """Enumerate every brand-dir under ``brands_root`` that has a ``.brand-seo.yml``.
+
+    Returns sorted list of ``{slug, display_name}``. Used by the skill's
+    interactive brand picker when ``--brand`` is omitted.
+    """
+    root = brands_root if brands_root is not None else QANT_BRANDS_ROOT
+    out: list[dict[str, str]] = []
+    if not root.is_dir():
+        return out
+    for p in sorted(root.iterdir()):
+        if not p.is_dir():
+            continue
+        seo_yml = p / ".brand-seo.yml"
+        if not seo_yml.is_file():
+            continue
+        identity = _parse_brand_seo_yml(seo_yml)
+        display = identity.get("display_name") or identity.get("brand") or p.name
+        out.append({"slug": p.name, "display_name": display})
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--brand", required=True, help="Brand slug (directory name under qant/brands/)")
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--staging", action="store_true", help="Use .env.stg")
-    group.add_argument("--development", action="store_true", help="Use .env.dev")
-    parser.add_argument(
-        "--redact-key",
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--brand",
+        help="Brand slug (directory name under qant/brands/). Returns the full brand context.",
+    )
+    mode.add_argument(
+        "--list-brands",
         action="store_true",
-        help="Set brand_key to null in the output (for dry-runs/logs).",
+        help="List every brand with a .brand-seo.yml as JSON [{slug, display_name}, ...]. Used by the /blog skill brand picker.",
     )
     parser.add_argument(
         "--brands-root",
@@ -357,22 +341,16 @@ def main() -> int:
 
     brands_root = Path(args.brands_root) if args.brands_root else None
 
+    if args.list_brands:
+        print(json.dumps(list_brands(brands_root), indent=2, sort_keys=True))
+        return 0
+
     try:
-        ctx = load_brand_context(
-            args.brand,
-            staging=args.staging,
-            development=args.development,
-            brands_root=brands_root,
-        )
-    except (FileNotFoundError, KeyError, ValueError) as e:
-        # Never echo the brand_key here; the failure path never has one anyway.
+        ctx = load_brand_context(args.brand, brands_root=brands_root)
+    except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
 
-    if args.redact_key:
-        ctx["brand_key"] = None
-
-    # stdout is the only place the brand_key may appear.
     print(json.dumps(ctx, indent=2, sort_keys=True))
     return 0
 
