@@ -44,12 +44,108 @@ as `blog-write`:
 |------|--------------------|
 | `--brand <slug>` | Phase 0.5 resolves brand context; identity injected into the rewrite prompt; Phase 7 submits the rewritten draft to the brand's qant API. |
 | `--author <slug>` | Phase 0.6 reads the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed via the Blog Manager UI); `writing_style` + structured-voice fields shape the rewrite prompt; `bio` is rendered into the article foot; `byline` populates frontmatter byline. The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. |
+| `--from-queue` | **Queue mode** (v1.9.2). Skip the positional `<file-path>` argument; instead pull every draft flagged for rewrite in `qant-blog-drafts.brands/{brand_slug}/drafts/{*}` (`review_state == "needs_rewrite"`) and rewrite each one in sequence. Requires `--brand <slug>`. See *Queue mode (Phase 0.3)* below for the workflow. |
 | `--no-submit` | Skips the submission phase entirely. |
 
 See `skills/blog-write/SKILL.md` Phase 0.5 and 0.6 for the exact resolution
 and loading steps — the rewrite path applies the same procedure verbatim.
 
 ## Workflow
+
+### Phase 0.3: Queue mode (when `--from-queue` is set)
+
+The operator-facing trigger here is "I don't want to go hunting for
+articles that need a rewrite — read every flagged draft, rewrite it, clear
+the flag." Drafts get flagged via the Blog Manager UI by setting the
+top-level field `review_state: "needs_rewrite"` (UI work tracked as
+qnt-045 in `/Users/adam/Projects/qant/TODO.md`). The skill never sets that
+field itself — it only consumes the flag and clears it on success.
+
+**1. Fetch the queue.** Required env vars: `QANT_BLOG_DRAFTS_PROJECT_ID`
+and `QANT_BLOG_DRAFTS_WRITER_KEY`.
+
+```bash
+python3 scripts/list_pending_rewrites.py --brand <brand-slug>
+```
+
+The script returns a JSON array of `{brand_slug, draft_id, draft_path,
+slug, title, author_slug, category, review_state, word_count}` per
+flagged draft. If the array is empty, the queue is empty — announce it
+and exit cleanly. Do not require `--brand` to be the same as the
+positional file argument; in queue mode there is no positional argument.
+
+**2. Iterate per draft.** For each entry:
+
+a. Read the full draft doc from Firestore (the list script returns
+   identifiers + summary, not the body — fetch the body fresh so the
+   rewrite acts on the current content):
+   ```python
+   db.collection("brands").document(brand_slug) \\
+     .collection("drafts").document(draft_id).get().to_dict()
+   ```
+
+b. Use the doc's `author.slug` as the resolved author for Phase 0.6 (no
+   prompt — the flagged draft carries its own author). Use
+   `body_markdown` as the input to the rewrite phases (skip Phase 1's
+   "detect format" step — the body is markdown).
+
+c. Run Phase 1 (Audit), Phase 2 (Research), Phase 3 (Chart Generation),
+   Phase 4 (Content Rewrite), Phase 5 (Verification), and Phase 5.5
+   (Delivery Contract) exactly as the file-path path does. The brand
+   context loaded in Phase 0.5 applies.
+
+d. Phase 5.6 (Draft submission) writes the rewritten draft via
+   `submit_draft_firestore.py` with the same `--brand-slug` and
+   `--author <author_slug>`. **Important:** the current submit path has
+   no slug-based upsert; it writes a NEW doc with a fresh auto-id. The
+   old flagged doc and the new rewritten doc both exist until a
+   downstream dedupe pass runs (or the upsert ships — see qnt-046).
+
+e. After Phase 5.6 returns success, clear the flag on the ORIGINAL
+   doc (not the new one — the new doc shouldn't have the flag at all,
+   and the old one is the one the next list_pending_rewrites call
+   would re-surface):
+   ```bash
+   python3 scripts/clear_review_state.py \\
+       --brand-slug <brand-slug> \\
+       --draft-id   <original-draft-id> \\
+       --reason     "rewritten via /blog rewrite --from-queue"
+   ```
+
+f. Log a one-line "ok / fail" summary per draft. Continue to the next
+   queue entry on failure rather than aborting the run — the operator
+   wants the queue to drain and any failures surfaced at the end.
+
+**3. End-of-run summary.** Print the count of drafts attempted, the
+count that succeeded through Phase 5.6, and the count that failed (with
+the failure reason per draft). Treat the run as successful (exit 0) if
+at least one draft processed cleanly; treat it as failure (exit 1) only
+if EVERY draft failed.
+
+**4. Testing pattern (before the UI ships).** To exercise the queue
+mode without the Blog Manager UI, set the flag manually via a one-shot
+admin script:
+
+```python
+from google.cloud import firestore
+from google.oauth2 import service_account
+import os
+creds = service_account.Credentials.from_service_account_file(
+    os.environ["QANT_BLOG_DRAFTS_WRITER_KEY"])
+db = firestore.Client(project=os.environ["QANT_BLOG_DRAFTS_PROJECT_ID"],
+                      credentials=creds)
+db.collection("brands/redbridgecyber/drafts").document(
+    "<draft-id>").update({"review_state": "needs_rewrite"})
+```
+
+Then run `/blog rewrite --from-queue --brand redbridgecyber` and watch
+the round-trip.
+
+**5. Future-state note.** When the slug-based upsert ships in
+`submit_draft_firestore.py` (qnt-046), Phase 0.3 step e becomes
+redundant — the upsert overwrites the same doc, the new payload doesn't
+carry `review_state`, and the flag is cleared as a side effect of the
+overwrite. Until then, the explicit clear step is load-bearing.
 
 ### Phase 1: Audit (Read-Only)
 
