@@ -681,7 +681,7 @@ in Phase 0.5, ship the draft to the brand's instance.
      "target_keyword": "<primary keyword>",
      "author": {
        "slug": "<resolved author slug>",
-       "name": "<byline.md frontmatter name:>"
+       "name": "<read from qant-blog-drafts.brands/{brand_slug}/authors/{slug}.name>"
      },
      "hero_image_url": "<frontmatter coverImage / ogImage>",
      "og": { "title": "...", "description": "...", "image": "..." },

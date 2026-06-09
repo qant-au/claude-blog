@@ -491,20 +491,27 @@ If `BRAND.md` and / or `VOICE.md` exist at the project root, load their fenced c
 
 When both are present, BRAND.md takes precedence on positioning, audience, taboo phrases, and topic scope; VOICE.md takes precedence on tone, sentence ceiling, and pronoun stance. The structured `blog-persona` JSON remains the canonical source for programmatic enforcement (tone sliders, readability bands); VOICE.md is the human-readable mirror for cross-skill prompts.
 
-### Author-bundle scope (v1.10+)
+### Author scope (Phase F-post — Firestore-managed)
 
-When `--author <slug>` is set on `blog-write` or `blog-rewrite`, three files
-under `skills/blog/authors/<slug>/` participate in cross-skill context:
+When `--author <slug>` is set on `blog-write` or `blog-rewrite`, the author
+record is read live from
+`qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed via the Blog
+Manager UI in the consumer app). The Firestore doc carries every field:
 
-| File | Role |
+| Field | Role |
 |------|------|
-| `bio.md` | Author bio block injected into the rendered article foot and the draft submission payload (`author.bio`). |
-| `style.md` | Writing-style guide. Loaded into the drafting prompt as a fenced untrusted-data block (same `load_untrusted_root.py` contract, invoked with `--allow-any-basename`). Takes precedence over `VOICE.md` when both are present. |
-| `byline.md` | One-liner byline string. Used in social previews and the `author.byline` payload field. |
+| `name` | Display name. Stamped onto the article frontmatter `author:` value and the draft submission payload's `author.name`. |
+| `byline` | One-line role descriptor. Surfaced under the author name on every article + as `authorByline` in social previews. |
+| `bio` | Author bio markdown. Rendered into the article foot. |
+| `writing_style` | Freeform voice guide. Loaded into the drafting prompt as the per-author voice block — takes precedence over `VOICE.md` when both are present. |
+| `target_audience` | Who the author writes for. Injected as a "you are writing for: ..." line in the writer-agent prompt. |
+| `locale` / `pronoun_stance` / `register` | Structured voice fields. Drive spelling, pronoun directive, and tonal anchor in the writer-agent prompt. |
+| `banned_phrases` | Strings the writer must never emit. Fails FLOW review (Phase 6) if any appear in the body. |
+| `signature_moves` | Phrases / patterns the author favours. Soft bias in the writer-agent prompt. |
 
-Author bundles checked into this repo are maintainer-trusted, but the loader
-still nonces and sanitizes them so the indirect-prompt-injection contract is
-uniform across all root-style inputs. See `skills/blog/authors/README.md`.
+The on-disk `skills/blog/authors/<slug>/` bundles were retired in
+Phase F-post; create / edit / delete authors via the Blog Manager UI
+instead. See `skills/blog/authors/README.md` for the retirement notice.
 
 ### DISCOURSE.md scope
 
