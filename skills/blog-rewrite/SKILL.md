@@ -157,21 +157,34 @@ c. Run Phase 1 (Audit), Phase 2 (Research), Phase 3 (Chart Generation),
 
 d. Phase 5.6 (Draft submission) writes the rewritten draft via
    `submit_draft_firestore.py` with the same `--brand-slug` and
-   `--author <author_slug>`. **Important:** the current submit path has
-   no slug-based upsert; it writes a NEW doc with a fresh auto-id. The
-   old flagged doc and the new rewritten doc both exist until a
-   downstream dedupe pass runs (or the upsert ships — see qnt-046).
+   `--author <author_slug>`. The submit path writes a NEW doc with a
+   fresh auto-id; step e then deletes the original so the operator
+   never sees a duplicate in the Drafts rail.
 
-e. After Phase 5.6 returns success, clear the flag on the ORIGINAL
-   doc (not the new one — the new doc shouldn't have the flag at all,
-   and the old one is the one the next list_pending_rewrites call
-   would re-surface):
+e. **After Phase 5.6 returns success** — meaning the rewritten draft
+   is committed to
+   `qant-blog-drafts.brands/{brand_slug}/drafts/{new_id}` — DELETE
+   the original flagged doc outright:
    ```bash
-   python3 scripts/clear_review_state.py \\
+   python3 scripts/delete_inbox_draft.py \\
        --brand-slug <brand-slug> \\
        --draft-id   <original-draft-id> \\
-       --reason     "rewritten via /blog rewrite --from-queue"
+       --reason     "superseded by rewrite via /blog rewrite --from-queue"
    ```
+   If the delete fails (rare — network / permissions), log the failure
+   and continue. The rewritten draft is still committed; the duplicate
+   is cosmetic and can be resolved with a manual delete or the next
+   queue pass.
+
+   **Order matters.** Do NOT delete the original before submit
+   succeeds. A submit failure with the original already deleted is
+   data loss. If Phase 5.6 fails, SKIP step e entirely so the original
+   stays in qant-blog-drafts with its `review_state: "needs_rewrite"`
+   flag intact and the next queue pass retries.
+
+   The older `clear_review_state.py` helper still exists for the manual
+   path (operator wants to lift a flag without actually rewriting). It
+   is no longer part of the queue-drain flow.
 
 f. Log a one-line "ok / fail" summary per draft. Continue to the next
    queue entry on failure rather than aborting the run — the operator
@@ -202,11 +215,14 @@ db.collection("brands/redbridgecyber/drafts").document(
 Then run `/blog rewrite --from-queue --brand redbridgecyber` and watch
 the round-trip.
 
-**5. Future-state note.** When the slug-based upsert ships in
-`submit_draft_firestore.py` (qnt-046), Phase 0.3 step e becomes
-redundant — the upsert overwrites the same doc, the new payload doesn't
-carry `review_state`, and the flag is cleared as a side effect of the
-overwrite. Until then, the explicit clear step is load-bearing.
+**5. Future-state note (obsolete).** ~~When the slug-based upsert
+ships in `submit_draft_firestore.py` (qnt-046), Phase 0.3 step e
+becomes redundant — the upsert overwrites the same doc, the new
+payload doesn't carry `review_state`, and the flag is cleared as a
+side effect of the overwrite.~~ Superseded: step e now deletes the
+original outright after a confirmed submit, so the duplicate-doc
+problem the upsert was meant to solve does not arise. qnt-046 is no
+longer load-bearing.
 
 ### Phase 1: Audit (Read-Only)
 
