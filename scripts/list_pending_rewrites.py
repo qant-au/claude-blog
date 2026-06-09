@@ -22,7 +22,13 @@ Both are required. If either is unset, exits 2.
 
 Usage
 -----
+    # Per-brand mode (legacy; useful for debugging one brand):
     python3 list_pending_rewrites.py --brand redbridgecyber
+
+    # All-brands mode — default for `/blog rewrite` invoked with no args.
+    # Enumerates every doc in the `brands` collection of the
+    # qant-blog-drafts project and merges all queues into one JSON array.
+    python3 list_pending_rewrites.py --all-brands
 
 Output (JSON to stdout)::
 
@@ -83,12 +89,53 @@ def _word_count(data: dict) -> int:
     return len(body.split()) if body else 0
 
 
+def _query_brand(client, brand_slug: str) -> list[dict]:
+    """Return the flagged-draft rows for one brand.
+
+    Helper so the same per-brand query runs both in ``--brand`` mode and in
+    the ``--all-brands`` enumeration. Raises on Firestore errors; the caller
+    decides whether to skip the brand or abort the whole run.
+    """
+    from google.cloud.firestore_v1.base_query import FieldFilter  # type: ignore
+
+    drafts_path = f"brands/{brand_slug}/drafts"
+    query = client.collection(drafts_path).where(
+        filter=FieldFilter("review_state", "==", "needs_rewrite")
+    )
+    rows: list[dict] = []
+    for snap in query.stream():
+        data = snap.to_dict() or {}
+        rows.append(
+            {
+                "brand_slug": brand_slug,
+                "draft_id": snap.id,
+                "draft_path": f"{drafts_path}/{snap.id}",
+                "slug": data.get("slug") or data.get("article_slug") or "",
+                "title": data.get("title") or "",
+                "author_slug": _author_slug(data),
+                "category": data.get("category") or "",
+                "review_state": data.get("review_state") or "",
+                "word_count": _word_count(data),
+            }
+        )
+    return rows
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    ap.add_argument(
+    grp = ap.add_mutually_exclusive_group(required=True)
+    grp.add_argument(
         "--brand",
-        required=True,
         help="Brand slug (e.g. redbridgecyber). Scoped to brands/{slug}/drafts/.",
+    )
+    grp.add_argument(
+        "--all-brands",
+        action="store_true",
+        help=(
+            "Enumerate every doc in the `brands` collection and merge each "
+            "brand's flagged-draft queue into one JSON array. Default for "
+            "`/blog rewrite` with no args."
+        ),
     )
     args = ap.parse_args()
 
@@ -96,7 +143,6 @@ def main() -> int:
 
     try:
         from google.cloud import firestore  # type: ignore
-        from google.cloud.firestore_v1.base_query import FieldFilter  # type: ignore
         from google.oauth2 import service_account  # type: ignore
     except ImportError as exc:
         sys.stderr.write(
@@ -108,27 +154,20 @@ def main() -> int:
     creds = service_account.Credentials.from_service_account_file(key_path)
     client = firestore.Client(project=project, credentials=creds)
 
-    drafts_path = f"brands/{args.brand}/drafts"
+    rows: list[dict] = []
     try:
-        query = client.collection(drafts_path).where(
-            filter=FieldFilter("review_state", "==", "needs_rewrite")
-        )
-        rows: list[dict] = []
-        for snap in query.stream():
-            data = snap.to_dict() or {}
-            rows.append(
-                {
-                    "brand_slug": args.brand,
-                    "draft_id": snap.id,
-                    "draft_path": f"{drafts_path}/{snap.id}",
-                    "slug": data.get("slug") or data.get("article_slug") or "",
-                    "title": data.get("title") or "",
-                    "author_slug": _author_slug(data),
-                    "category": data.get("category") or "",
-                    "review_state": data.get("review_state") or "",
-                    "word_count": _word_count(data),
-                }
-            )
+        if args.all_brands:
+            for brand_doc in client.collection("brands").stream():
+                try:
+                    rows.extend(_query_brand(client, brand_doc.id))
+                except Exception as exc:  # pylint: disable=broad-except
+                    # Don't abort the whole run because one brand's query
+                    # failed — the operator wants the queue to drain.
+                    sys.stderr.write(
+                        f"warn: skipping brand {brand_doc.id}: {exc}\n"
+                    )
+        else:
+            rows.extend(_query_brand(client, args.brand))
     except Exception as exc:  # pylint: disable=broad-except
         sys.stderr.write(f"error: Firestore query failed: {exc}\n")
         return 1

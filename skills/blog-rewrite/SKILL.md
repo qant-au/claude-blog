@@ -12,7 +12,7 @@ description: >
   HTML). Use when user says "rewrite blog", "optimize blog", "update blog",
   "improve blog", "fix blog", "refresh blog post", "blog optimization".
 user-invokable: true
-argument-hint: "<file-path>"
+argument-hint: "[<file-path>]"
 license: MIT
 ---
 
@@ -44,13 +44,43 @@ as `blog-write`:
 |------|--------------------|
 | `--brand <slug>` | Phase 0.5 resolves brand context; identity injected into the rewrite prompt; Phase 7 submits the rewritten draft to the brand's qant API. |
 | `--author <slug>` | Phase 0.6 reads the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed via the Blog Manager UI); `writing_style` + structured-voice fields shape the rewrite prompt; `bio` is rendered into the article foot; `byline` populates frontmatter byline. The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. |
-| `--from-queue` | **Queue mode** (v1.9.2). Skip the positional `<file-path>` argument; instead pull every draft flagged for rewrite in `qant-blog-drafts.brands/{brand_slug}/drafts/{*}` (`review_state == "needs_rewrite"`) and rewrite each one in sequence. Requires `--brand <slug>`. See *Queue mode (Phase 0.3)* below for the workflow. |
+| `--from-queue` | **Queue mode** (v1.9.2). Skip the positional `<file-path>` argument; instead pull every draft flagged for rewrite in `qant-blog-drafts.brands/{brand_slug}/drafts/{*}` (`review_state == "needs_rewrite"`) and rewrite each one in sequence. When combined with `--brand <slug>`, the drain is scoped to that one brand. With `--all-brands` (or no `--brand`), the drain enumerates every brand in `qant-blog-drafts.brands/` and merges the queues. See *Queue mode (Phase 0.3)* below. |
+| `--all-brands` | Multi-brand queue mode (v1.10). Implies `--from-queue`. Enumerates `qant-blog-drafts.brands/*` and rewrites every flagged draft across every brand in one pass. **This is the default when `/blog rewrite` is invoked with NO arguments** — see *Phase 0: argument dispatch* for the auto-mode contract. |
 | `--no-submit` | Skips the submission phase entirely. |
 
 See `skills/blog-write/SKILL.md` Phase 0.5 and 0.6 for the exact resolution
 and loading steps — the rewrite path applies the same procedure verbatim.
 
 ## Workflow
+
+### Phase 0: Argument dispatch (zero-prompt default)
+
+The operator never wants the skill to ask questions about which draft to
+rewrite or which brand to scope to. The dispatch is fully derivable from
+the arguments and the qant-blog-drafts state. Resolve in this order; do
+NOT prompt the operator at any branch.
+
+| Argument shape | Mode |
+|---|---|
+| positional `<file-path>` | File-path mode. Run the existing file-path rewrite path. |
+| `--from-queue --brand <slug>` (any order) | Per-brand queue drain. Call `list_pending_rewrites.py --brand <slug>` and iterate Phase 0.3 over that brand only. |
+| `--from-queue --all-brands` OR `--from-queue` alone OR **no arguments at all** | Multi-brand queue drain. Call `list_pending_rewrites.py --all-brands`, iterate Phase 0.3 over the merged queue. **This is the default behaviour** for an arg-less `/blog rewrite`. |
+| `--brand <slug>` alone, no positional, no `--from-queue` | Equivalent to `--from-queue --brand <slug>` — same per-brand drain. |
+
+After dispatch:
+
+- If the resolved queue is empty, print one line — `"No drafts flagged for
+  rewrite across any brand."` (or `"… for brand <slug>."` in per-brand
+  mode) — and exit 0. Do NOT prompt for a file path, do NOT offer to
+  enumerate options.
+- Otherwise announce `"Found N drafts across M brand(s). Draining the
+  queue."` and proceed to Phase 0.3 over the resolved row list.
+
+The 4-option "Specific file path / Queue mode / Pick a recent draft /
+Chat about this" chooser the user previously saw was the Claude Code
+harness reacting to the now-removed `argument-hint: "<file-path>"`
+required-arg signal. The new `argument-hint: "[<file-path>]"` (optional)
+combined with the dispatch above suppresses it.
 
 ### Phase 0.3: Queue mode (when `--from-queue` is set)
 
@@ -65,14 +95,26 @@ field itself — it only consumes the flag and clears it on success.
 and `QANT_BLOG_DRAFTS_WRITER_KEY`.
 
 ```bash
+# Multi-brand drain (default for arg-less `/blog rewrite`):
+python3 scripts/list_pending_rewrites.py --all-brands
+
+# Per-brand drain (legacy / debugging):
 python3 scripts/list_pending_rewrites.py --brand <brand-slug>
 ```
 
 The script returns a JSON array of `{brand_slug, draft_id, draft_path,
 slug, title, author_slug, category, review_state, word_count}` per
-flagged draft. If the array is empty, the queue is empty — announce it
-and exit cleanly. Do not require `--brand` to be the same as the
-positional file argument; in queue mode there is no positional argument.
+flagged draft — `brand_slug` is populated per row so the iterator can
+re-resolve brand context per draft in multi-brand mode. If the array is
+empty, the queue is empty — announce it and exit cleanly (Phase 0
+already prints the "no flagged drafts" line; reaching Phase 0.3 with an
+empty queue is a bug).
+
+In multi-brand mode, the Phase 0.5 brand-context resolution
+(`load_brand_context.py --brand <slug>`) runs PER ROW with the row's
+`brand_slug`. If a brand's `.brand-seo.yml` is missing or its
+`brand_key` is absent, log "fail: brand context unavailable for
+&lt;slug&gt;" and continue to the next row — never abort the run.
 
 **2. Iterate per draft.** For each entry:
 
