@@ -157,14 +157,19 @@ def main() -> int:
     rows: list[dict] = []
     try:
         if args.all_brands:
-            for brand_doc in client.collection("brands").stream():
+            # list_documents() (not stream()) is required here: the
+            # qant-blog-drafts schema uses `brands/{slug}/drafts/{id}` with
+            # no parent-doc fields, so the brand "documents" are stub refs
+            # that exist only because they own subcollections. stream()
+            # skips them; list_documents() returns them.
+            for brand_ref in client.collection("brands").list_documents():
                 try:
-                    rows.extend(_query_brand(client, brand_doc.id))
+                    rows.extend(_query_brand(client, brand_ref.id))
                 except Exception as exc:  # pylint: disable=broad-except
                     # Don't abort the whole run because one brand's query
                     # failed — the operator wants the queue to drain.
                     sys.stderr.write(
-                        f"warn: skipping brand {brand_doc.id}: {exc}\n"
+                        f"warn: skipping brand {brand_ref.id}: {exc}\n"
                     )
         else:
             rows.extend(_query_brand(client, args.brand))
