@@ -440,7 +440,10 @@ Every public statistic must carry three components AT DRAFTING TIME:
 3. **URL plus retrieval date in the source block at the bottom of the post.**
    Provenance discipline lets future readers and AI crawlers verify the
    source still says what was claimed. Format:
-   - "[Publisher], [Title], retrieved YYYY-MM-DD, [full URL]"
+   - "[Publisher], [Title] *— retrieved D Month YYYY*, [full URL]"
+   - The `— retrieved D Month YYYY` portion must be in markdown italics
+     and use the human date form (e.g. `9 June 2026` not `2026-06-09`).
+     The em-dash separates the title from the retrieval qualifier.
 
 **FLOW quality bar (drop or replace):**
 Public claims must use verified sources OR stay qualitative. If a statistic

@@ -145,7 +145,7 @@ Do NOT use this template for:
 
 - Year anchor in prose: write "In 2026, ..." or "As of Q1 2026, ..." BEFORE the number, not in a parenthetical.
 - Inline citation: name the publisher AND the document or report title.
-- Source block at the bottom: include the full URL plus `retrieved YYYY-MM-DD` for every cited source.
+- Source block at the bottom: include the full URL plus the italicised qualifier `*— retrieved D Month YYYY*` (e.g. `*— retrieved 9 June 2026*`) for every cited source.
 
 Drop unverifiable stats. Replace contradicted stats with verified alternatives. Reference: `skills/blog/references/flow-alignment.md`.
 

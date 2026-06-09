@@ -12,7 +12,7 @@ Every public statistic in a claude-blog post must satisfy three components.
 
 1. **Year anchor in prose.** Write "In 2026," or "As of Q1 2026," BEFORE the statistic, not buried in a parenthetical. Example: "In 2026, Ahrefs found a 58% lower CTR for position-one results when an AI Overview was present." Not: "Position-one CTR dropped 58% (Ahrefs, 2026)."
 2. **Inline citation.** Publisher plus title (or document name) inline with the claim. Example: "Ahrefs, AI Overviews CTR update, December 2025."
-3. **URL with retrieval date.** Full URL plus `retrieved YYYY-MM-DD` in a bibliography or source block at the end of the post. This is provenance discipline; it lets future readers (and AI crawlers) verify the source still says what was claimed.
+3. **URL with retrieval date.** Full URL plus the italicised qualifier `*— retrieved D Month YYYY*` (e.g. `*— retrieved 9 June 2026*`) in a bibliography or source block at the end of the post. The em-dash separates the cited title from the retrieval qualifier; the date is the human form, not ISO. This is provenance discipline; it lets future readers (and AI crawlers) verify the source still says what was claimed.
 
 Public claims must use verified sources OR stay qualitative. Unverifiable stats get dropped, contradicted stats get replaced with a verified alternative. This is the FLOW quality bar adopted verbatim.
 

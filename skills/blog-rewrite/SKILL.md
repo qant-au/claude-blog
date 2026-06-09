@@ -89,10 +89,29 @@ b. Use the doc's `author.slug` as the resolved author for Phase 0.6 (no
    `body_markdown` as the input to the rewrite phases (skip Phase 1's
    "detect format" step — the body is markdown).
 
+b.1. **Read `review_instructions` from the doc** (top-level field, sibling
+   to `review_state`). The Blog Manager UI's Rewrite modal lets the
+   operator type free-form guidance — for example, "remove the SCIF
+   reference, replace with: at a conference with a senior federal
+   government representative presenting", or "drop the third subhead;
+   it duplicates the second". The field may be empty (unguided rewrite)
+   or absent on older flagged drafts. Treat empty / whitespace-only as
+   absent.
+
+   When `review_instructions` is non-empty, inject it into the
+   writer-agent prompt for Phase 4 (Content Rewrite) as a top-of-prompt
+   instruction block, headed with "**Operator's rewrite guidance** —
+   apply faithfully:" and followed by the instructions verbatim. Place
+   it before the brand identity / author voice blocks so the rewrite
+   agent treats it as a hard constraint, not a stylistic preference.
+   Surface a one-line "instructions: <first 80 chars>…" entry in the
+   per-draft progress log so the operator sees the guidance was loaded.
+
 c. Run Phase 1 (Audit), Phase 2 (Research), Phase 3 (Chart Generation),
-   Phase 4 (Content Rewrite), Phase 5 (Verification), and Phase 5.5
-   (Delivery Contract) exactly as the file-path path does. The brand
-   context loaded in Phase 0.5 applies.
+   Phase 4 (Content Rewrite — see step b.1 for `review_instructions`
+   injection), Phase 5 (Verification), and Phase 5.5 (Delivery Contract)
+   exactly as the file-path path does. The brand context loaded in
+   Phase 0.5 applies.
 
 d. Phase 5.6 (Draft submission) writes the rewritten draft via
    `submit_draft_firestore.py` with the same `--brand-slug` and
