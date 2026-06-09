@@ -44,7 +44,6 @@ as `blog-write`:
 |------|--------------------|
 | `--brand <slug>` | Phase 0.5 resolves brand context; identity injected into the rewrite prompt; Phase 7 submits the rewritten draft to the brand's qant API. |
 | `--author <slug>` | Phase 0.6 reads the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed via the Blog Manager UI); `writing_style` + structured-voice fields shape the rewrite prompt; `bio` is rendered into the article foot; `byline` populates frontmatter byline. The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. |
-| `--staging` / `--development` | Selects the env file via `load_brand_context.py`. `--staging` defaults submission to YES; `--development` defaults it to NO. |
 | `--no-submit` | Skips the submission phase entirely. |
 
 See `skills/blog-write/SKILL.md` Phase 0.5 and 0.6 for the exact resolution
@@ -393,25 +392,34 @@ as `blog-write` Phase 7.5:
    the new draft to the published predecessor (via `metadata.replaces_slug`).
 
 2. **Decide whether to submit**:
-   - `--no-submit` → write `submission.json`, skip the POST.
-   - `--staging` → submit by default. No prompt.
-   - `--development` → DO NOT submit by default. Ask: "Submit to dev
-     instance? (y/N)".
-   - default → ask: "Submit to instance? (y/n)".
+   - `--no-submit` → write `submission.json`, skip the write.
+   - Otherwise → submit. The contributor invoked the skill; they want
+     the draft saved. No env-flag-dependent prompt.
 
-3. **Submit**:
+3. **Submit** — writes to the shared `qant-blog-drafts` Firestore
+   project via the writer service-account key (separate Firebase project
+   from any instance — credential blast radius is "blog drafts only").
+   Auth is via two env vars set in the contributor's shell:
+
+   - `QANT_BLOG_DRAFTS_PROJECT_ID` — e.g. `qant-blog-drafts`
+   - `QANT_BLOG_DRAFTS_WRITER_KEY` — absolute path to writer SA JSON
+
    ```bash
-   python3 scripts/submit_draft.py \\
-       --api-url "<api_url from Phase 0.5>" \\
-       --brand-key "<brand_key from Phase 0.5>" \\
+   python3 scripts/submit_draft_firestore.py \\
        --brand-slug "<brand_slug from Phase 0.5>" \\
+       --author "<author_slug from Phase 0.6>" \\
        --payload "<draft-folder>/submission.json"
    ```
-   Report the returned draft id. Never print `brand_key`.
 
-4. **On failure**: surface stderr verbatim, leave `submission.json` for
-   retry, treat as a non-fatal warning. The rewrite is still complete
-   locally.
+   The script verifies the author exists in
+   `qant-blog-drafts.brands/{brand_slug}/authors/{author_slug}` and
+   fails fast with a "create the author via the Blog Manager UI first"
+   message if it doesn't. Report the returned `draft_path` to the user.
+
+4. **On failure**: surface the script's stderr verbatim, write the
+   payload to `<draft-folder>/submission.json` (so the user can retry
+   manually), and report the failure as a non-fatal warning. The
+   rewrite is still complete locally.
 
 ## Update Mode
 

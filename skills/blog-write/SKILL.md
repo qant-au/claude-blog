@@ -740,10 +740,9 @@ in Phase 0.5, ship the draft to the brand's instance.
    consumer-app Blog Manager → Drafts; inspect in the Firebase console
    for project `qant-blog-drafts` if needed").
 
-   The legacy HTTP-based path (`scripts/submit_draft.py` POSTing to
-   `${api_url}/private/blog/drafts` with a per-brand bearer key) is
-   kept in the repo for backward compatibility with non-QANT consumers,
-   but is NOT used by this skill anymore.
+   The legacy HTTP-based `scripts/submit_draft.py` path was removed
+   in Phase F-post — all QANT drafts now go through
+   `submit_draft_firestore.py`. See the canonical spec for context.
 
 4. **On failure**: surface the script's stderr verbatim, write the
    payload to `<draft-folder>/submission.json` (so the user can retry

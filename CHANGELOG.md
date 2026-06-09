@@ -7,25 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### QANT integration — final shape (post-Phase F-post)
+
+The QANT integration evolved across several phases (E → E4.5 → F → F-post)
+that experimented with on-disk author bundles, brand-key auth, and a
+mix of `--author-bundle` vs `--author` flags. The final shipped shape,
+canonicalised in `/Users/adam/Projects/qant/docs/superpowers/specs/2026-06-09-blog-author-system-final.md`,
+is summarised below. Earlier intermediate steps were retired before they
+became user-visible; their narrative is omitted to avoid misleading
+future readers.
+
 ### Added
 
-- `scripts/submit_draft_firestore.py`: QANT workflow path. Writes drafts to the shared `qant-blog-drafts` Firestore project via env-var-based service-account auth (`QANT_BLOG_DRAFTS_PROJECT_ID`, `QANT_BLOG_DRAFTS_WRITER_KEY`). Replaces the per-brand bearer-key HTTP path for QANT consumers; the legacy `submit_draft.py` remains for non-QANT consumers. Architecture rationale (credential blast radius split): `~/.claude/plans/please-review-the-work-harmonic-cosmos.md` § E3.
-- `submit_draft_firestore.py` (E4.5): now requires `--author-bundle <path>`. Upserts `brands/{brand_slug}/authors/{author_slug}` from the on-disk bundle (bio + style + byline) with a content-hash check (no-op when unchanged). Defensively strips `author.bio` / `author.byline` from the draft payload — they live once on the per-author doc, not on every draft. Stamps the canonical `slug` / `name` from `byline.md` onto the draft's `author` object.
-- `[project.optional-dependencies] qant` in `pyproject.toml`: `google-cloud-firestore` + `google-auth` for the new submit path.
-- `scripts/load_brand_context.py`: parses the v2 `.brand-seo.yml content:` block (audience / strategy / plan / categories / url_pattern / default_author) and emits it nested under `brand_identity.content`. Auto-discovers brand-local author bundles under `<brand_dir>/authors/<slug>/` and emits the list as `authors`. Emits `brand_domain` (from `NEXT_PUBLIC_BRAND_DOMAIN`, falling back to a YAML-derived hostname).
-- `load_brand_context.py --list-brands` (E4.5): enumerates every brand under `/Users/adam/Projects/qant/brands/` that has a `.brand-seo.yml`, returning `[{slug, display_name}, ...]`. Used by `/blog write`'s Phase 0.5 interactive brand picker when `--brand` is omitted.
+- `scripts/submit_draft_firestore.py`: writes drafts to the shared
+  `qant-blog-drafts` Firestore project via env-var-based service-account
+  auth (`QANT_BLOG_DRAFTS_PROJECT_ID`, `QANT_BLOG_DRAFTS_WRITER_KEY`).
+  Takes `--author <slug>` (the author must already exist in
+  `qant-blog-drafts.brands/{brand_slug}/authors/{slug}`; if not, the
+  script fails fast with a message pointing the operator at the Blog
+  Manager UI). Stamps the canonical `slug` / `name` from the live
+  Firestore author doc onto the draft's `author` object. Defensively
+  strips `author.bio` / `author.byline` from the payload (they live once
+  on the per-author doc).
+- `scripts/load_brand_context.py`: parses `.brand-seo.yml` `content:`
+  block (audience / strategy / plan / categories / url_pattern /
+  default_author) into `brand_identity.content`. Emits `brand_domain`
+  (from `NEXT_PUBLIC_BRAND_DOMAIN`, falling back to a YAML-derived
+  hostname). Does NOT enumerate authors from disk — the on-disk
+  `brands/<slug>/authors/` bundles were retired in Phase F-post.
+- `load_brand_context.py --list-brands`: enumerates every brand under
+  `/Users/adam/Projects/qant/brands/` that has a `.brand-seo.yml`.
+  Used by `/blog write`'s Phase 0.5 brand picker when `--brand` is omitted.
+- `load_brand_context.py --list-authors --brand <slug>`: queries
+  `qant-blog-drafts.brands/{slug}/authors/*` and returns
+  `[{slug, name, byline}, ...]`. Used by `/blog write`'s Phase 0.6
+  author picker.
+- `[project.optional-dependencies] qant` in `pyproject.toml`:
+  `google-cloud-firestore` + `google-auth` for the Firestore submit path.
+- `scripts/smoke-author-dual-write.sh`: end-to-end skill round-trip
+  smoke. Lists authors from qant-blog-drafts, submits a draft
+  referencing a UI-managed author, verifies the draft landed, and
+  cleans up. See the canonical spec for run instructions.
 
 ### Changed
 
-- `skills/blog-write/SKILL.md`: Phase 0.5 documents the new loader output (brand_domain, content block, authors list). Phase 0.6 author bundle lookup tries `<brand_dir>/authors/<slug>/` FIRST, falls back to `skills/blog/authors/<slug>/`. Phase 5a derives `author:` from `byline.md` frontmatter (canonical), falls back to `bio.md` H1 for legacy bundles. Phase 7.5 calls `submit_draft_firestore.py` instead of the HTTP `submit_draft.py`.
-- `skills/blog-write/SKILL.md` (E4.5): Phase 0.5 prompts when `--brand` is omitted; Phase 0.6 prompts when `--author` is omitted (default highlighted = `content.default_author`). Phase 7.5 payload shrinks to `author: {slug, name}` only — `byline` / `bio` removed from per-draft, surfaced via the per-author Firestore doc.
-- `skills/blog/SKILL.md` (E4.5): per-brand-and-per-author flags table updated — `--brand` and `--author` are optional and prompt when omitted; `--staging` / `--development` removed; loader reads env-file precedence `.env` → `.env.stg` → `.env.dev`.
-- `skills/blog-write-adam/SKILL.md`: alias picks `--author adam-burgess` when `--brand` is set (Phase E E1 brand-local convention), `--author adam` otherwise (skill-local legacy). E4.5: dropped env-flag refs.
+- `skills/blog/SKILL.md`: per-brand and per-author flag table — `--brand`
+  and `--author` are optional and prompt when omitted; no
+  `--staging` / `--development` flags. The brand-context loader reads
+  env-file precedence `.env` → `.env.stg` → `.env.dev`. Author scope
+  section describes the live Firestore doc fields (name, byline, bio,
+  target_audience, locale, pronoun_stance, register, banned_phrases,
+  signature_moves, writing_style) — managed via the Blog Manager UI.
+- `skills/blog-write/SKILL.md`: Phase 0.6 reads the author from
+  `qant-blog-drafts` via `--list-authors`. Phase 7.5 payload's `author`
+  field is `{slug, name}` only — bio + byline live once on the
+  per-author Firestore doc and are joined client-side at render time.
+- `skills/blog-rewrite/SKILL.md`: mirrors the blog-write submission
+  shape — no `--staging` / `--development` flags; submission via
+  `submit_draft_firestore.py`, not the legacy HTTP `submit_draft.py`.
+- `skills/blog-write-adam/SKILL.md`: alias injects
+  `--author adam-burgess` when `--brand` is set; refuses if a
+  conflicting `--author` is passed.
 
-### Removed (E4.5)
+### Removed
 
-- `load_brand_context.py`: `--staging` and `--development` flags. Drafts always go to the single `qant-blog-drafts` Firestore project — env split is meaningless on the producer side.
-- `load_brand_context.py` output: `brand_key` and `api_url` fields. The new submit path uses env-var SA auth, not per-brand bearer keys.
+- On-disk author bundles at `brands/<slug>/authors/<slug>/{bio,style,byline}.md`
+  and the skill-local fallback at `skills/blog/authors/<slug>/*`. Replaced
+  by Firestore-managed author docs in `qant-blog-drafts`, edited via the
+  Blog Manager UI in the consumer app. See
+  `skills/blog/authors/README.md`.
+- `scripts/submit_draft.py` (the legacy HTTP submitter using per-brand
+  bearer keys + `--api-url`). Replaced by `submit_draft_firestore.py`
+  for QANT workflows.
+- `--author-bundle <path>` flag on `submit_draft_firestore.py`.
+  Replaced by `--author <slug>` reading the author from
+  `qant-blog-drafts`.
+- `--staging` and `--development` flags on the QANT submit path. Drafts
+  always go to the single `qant-blog-drafts` Firestore project; env
+  split is meaningless on the producer side.
+- `load_brand_context.py` output: `brand_key`, `api_url`, and `authors`
+  fields. SA auth replaces per-brand bearer keys; the `authors` field
+  is gone because authors live in Firestore, not on disk
+  (use `--list-authors --brand <slug>` instead).
 
 ## [1.9.1] - 2026-05-18
 

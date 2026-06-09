@@ -21,6 +21,14 @@ user-invokable: true
 argument-hint: "[write|rewrite|analyze|brief|calendar|cannibalization|strategy|outline|seo-check|schema|repurpose|geo|image|audit|factcheck|persona|brand|discourse|taxonomy|notebooklm|audio|google|update|cluster|multilingual|translate|localize|locale-audit|flow] [topic-or-file]"
 ---
 
+<!--
+QANT integration — canonical architecture reference:
+/Users/adam/Projects/qant/docs/superpowers/specs/2026-06-09-blog-author-system-final.md
+
+Operator-facing UI guide:  qant-common/docs/user/blog/manager.md
+Ops runbook:               qant-common/docs/system/ops/blog.md
+-->
+
 # Blog: Content Engine for Rankings & AI Citations
 
 Full-lifecycle blog management: strategy, briefs, outlines, writing, analysis,

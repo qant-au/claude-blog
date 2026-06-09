@@ -1,5 +1,11 @@
 # Author Bundles — RETIRED
 
+> **Canonical reference** for the current author architecture:
+> `/Users/adam/Projects/qant/docs/superpowers/specs/2026-06-09-blog-author-system-final.md`.
+> See also the operator guide
+> (`qant-common/docs/user/blog/manager.md`) and ops runbook
+> (`qant-common/docs/system/ops/blog.md`).
+
 The `skills/blog/authors/<slug>/` disk-bundle layout was retired in
 Phase F-post (June 2026). Authors are now managed via the **Blog Manager
 UI** in the QANT consumer app, with the data stored in the
