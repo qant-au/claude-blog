@@ -42,6 +42,7 @@ Output (JSON to stdout)::
         "author_slug":  "red-bridge-cyber-team",
         "category":     "visibility",
         "review_state": "needs_rewrite",
+        "review_targets": {"content": true, "image": false},
         "word_count":   1834
       },
       ...
@@ -89,6 +90,23 @@ def _word_count(data: dict) -> int:
     return len(body.split()) if body else 0
 
 
+def _row(brand_slug: str, drafts_path: str, snap_id: str, data: dict) -> dict:
+    """Shape one flagged-draft queue row. ``review_targets`` defaults to
+    content-only for legacy drafts flagged before targets existed."""
+    return {
+        "brand_slug": brand_slug,
+        "draft_id": snap_id,
+        "draft_path": f"{drafts_path}/{snap_id}",
+        "slug": data.get("slug") or data.get("article_slug") or "",
+        "title": data.get("title") or "",
+        "author_slug": _author_slug(data),
+        "category": data.get("category") or "",
+        "review_state": data.get("review_state") or "",
+        "review_targets": data.get("review_targets") or {"content": True, "image": False},
+        "word_count": _word_count(data),
+    }
+
+
 def _query_brand(client, brand_slug: str) -> list[dict]:
     """Return the flagged-draft rows for one brand.
 
@@ -102,23 +120,10 @@ def _query_brand(client, brand_slug: str) -> list[dict]:
     query = client.collection(drafts_path).where(
         filter=FieldFilter("review_state", "==", "needs_rewrite")
     )
-    rows: list[dict] = []
-    for snap in query.stream():
-        data = snap.to_dict() or {}
-        rows.append(
-            {
-                "brand_slug": brand_slug,
-                "draft_id": snap.id,
-                "draft_path": f"{drafts_path}/{snap.id}",
-                "slug": data.get("slug") or data.get("article_slug") or "",
-                "title": data.get("title") or "",
-                "author_slug": _author_slug(data),
-                "category": data.get("category") or "",
-                "review_state": data.get("review_state") or "",
-                "word_count": _word_count(data),
-            }
-        )
-    return rows
+    return [
+        _row(brand_slug, drafts_path, snap.id, snap.to_dict() or {})
+        for snap in query.stream()
+    ]
 
 
 def main() -> int:
