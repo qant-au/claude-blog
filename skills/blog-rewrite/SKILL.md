@@ -103,9 +103,12 @@ python3 scripts/list_pending_rewrites.py --brand <brand-slug>
 ```
 
 The script returns a JSON array of `{brand_slug, draft_id, draft_path,
-slug, title, author_slug, category, review_state, word_count}` per
-flagged draft — `brand_slug` is populated per row so the iterator can
-re-resolve brand context per draft in multi-brand mode. If the array is
+slug, title, author_slug, category, review_state, review_targets,
+word_count}` per flagged draft — `brand_slug` is populated per row so
+the iterator can re-resolve brand context per draft in multi-brand mode.
+`review_targets` is `{content: bool, image: bool}` (defaulted to
+`{content: true, image: false}` for drafts flagged before targets
+existed) and selects the branch in step b.2. If the array is
 empty, the queue is empty — announce it and exit cleanly (Phase 0
 already prints the "no flagged drafts" line; reaching Phase 0.3 with an
 empty queue is a bug).
@@ -149,6 +152,19 @@ b.1. **Read `review_instructions` from the doc** (top-level field, sibling
    Surface a one-line "instructions: <first 80 chars>…" entry in the
    per-draft progress log so the operator sees the guidance was loaded.
 
+b.2. **Read `review_targets` from the doc** (top-level field, sibling to
+   `review_state`; default `{content: true, image: false}` when absent).
+   Log `targets: content=<bool> image=<bool>` in the per-draft progress
+   line, then dispatch:
+
+   | `content` | `image` | Branch |
+   |---|---|---|
+   | true | false | **Content-only** (legacy default) — steps c, d, d.1 (copy image), e, f |
+   | true | true  | **Content + image** — steps c, d, d.2 (fresh image), e, f |
+   | false | true | **Image-only** — step d.3 ONLY (skip c/d/e: no body rewrite, no resubmit, no delete) |
+
+   (`{content: false, image: false}` never occurs — the API rejects it.)
+
 c. Run Phase 1 (Audit), Phase 2 (Research), Phase 3 (Chart Generation),
    Phase 4 (Content Rewrite — see step b.1 for `review_instructions`
    injection), Phase 5 (Verification), and Phase 5.5 (Delivery Contract)
@@ -161,10 +177,62 @@ d. Phase 5.6 (Draft submission) writes the rewritten draft via
    fresh auto-id; step e then deletes the original so the operator
    never sees a duplicate in the Drafts rail.
 
-e. **After Phase 5.6 returns success** — meaning the rewritten draft
-   is committed to
-   `qant-blog-drafts.brands/{brand_slug}/drafts/{new_id}` — DELETE
-   the original flagged doc outright:
+d.1. **Content-only branch — carry the hero across.** After Phase 5.6
+   returns the new `draft_id`, copy the original's hero image to the
+   new doc (no regeneration — no wasted image-gen credits; the
+   operator's approval state survives):
+   ```bash
+   python3 scripts/copy_draft_image.py \\
+       --brand-slug    <brand-slug> \\
+       --from-draft-id <original-draft-id> \\
+       --to-draft-id   <new-draft-id>
+   ```
+   `no_image_to_copy` on stdout is a clean no-op (legacy draft without
+   a hero). On failure, warn and continue — the rewritten draft stands;
+   the operator can flag an image-only rewrite later.
+
+d.2. **Content + image branch — regenerate.** Instead of copying,
+   produce a fresh hero exactly per blog-write Phase 6.5 step 1
+   (banana MCP or ladder → `magick` convert to 1200x630 WebP q80 →
+   agent visual review, max 2 retries) and attach it to the NEW draft
+   id per blog-write Phase 7.6 (`attach_draft_image.py`, q65/q50
+   re-encode ladder on exit 3). `review_instructions` guidance applies
+   to the image prompt as well as the body rewrite.
+
+d.3. **Image-only branch — in-place update, nothing else moves.** The
+   body is NOT rewritten and NO new doc is submitted; the draft id,
+   `submittedAt`, and any operator body edits all survive, and there is
+   no submit-failure window. Steps:
+
+   1. Build the image prompt from the doc's `title`, `category`,
+      `target_keyword` — and `review_instructions`, which here guides
+      the IMAGE ("less abstract, show an actual server room", …).
+   2. Generate + convert + visually review per blog-write Phase 6.5
+      step 1 (same checklist, same 2-retry cap, stock fallback).
+   3. Attach over the existing hero on the SAME draft:
+      ```bash
+      python3 scripts/attach_draft_image.py \\
+          --brand-slug <brand-slug> --draft-id <original-draft-id> \\
+          --image <folder>/hero.webp --mime image/webp \\
+          --width 1200 --height 630 --source banana
+      ```
+      The doc's `state` resets to `generated` so the operator re-reviews
+      it in the Blog Manager image modal.
+   4. Clear the flag trio so the queue does not re-surface the draft:
+      ```bash
+      python3 scripts/clear_review_state.py \\
+          --brand-slug <brand-slug> --draft-id <original-draft-id> \\
+          --reason "image regenerated via /blog rewrite --from-queue"
+      ```
+   5. Do NOT call `delete_inbox_draft.py`. Log `ok (image-only)` in the
+      end-of-run summary.
+
+e. **After Phase 5.6 returns success AND step d.1/d.2 has run** — the
+   rewritten draft is committed to
+   `qant-blog-drafts.brands/{brand_slug}/drafts/{new_id}` and its hero
+   is in place — DELETE the original flagged doc outright (the delete
+   cascades the original's `images` subcollection, so the copy in d.1
+   must complete first):
    ```bash
    python3 scripts/delete_inbox_draft.py \\
        --brand-slug <brand-slug> \\
