@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Clear the ``review_state`` field on a draft after a successful rewrite.
+"""Clear the rewrite flags on a draft after a successful rewrite.
 
-Used by ``/blog rewrite --from-queue`` after Phase 7.5 submits the rewritten
-draft. Removes the ``review_state`` field from the original (flagged)
+Used by ``/blog rewrite --from-queue``. Removes ``review_state``,
+``review_instructions``, and ``review_targets`` from the flagged
 Firestore doc so a subsequent ``list_pending_rewrites.py`` call does not
-re-surface it.
+re-surface it and no stale operator guidance leaks into a future flag.
+In the image-only rewrite branch this is the finishing step (the draft
+doc itself survives — only its hero image was regenerated).
 
 This script does NOT delete the draft doc itself; only the ``review_state``
 field. The draft remains visible in the Blog Manager UI under whatever
@@ -44,6 +46,32 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+
+
+def clear_flags(client, brand_slug: str, draft_id: str, *, reason: str | None) -> bool:
+    """Delete all three rewrite-flag fields. Returns False when the draft
+    doc does not exist (caller reports the error)."""
+    from google.cloud import firestore  # type: ignore
+
+    ref = (
+        client.collection("brands")
+        .document(brand_slug)
+        .collection("drafts")
+        .document(draft_id)
+    )
+    if not ref.get().exists:
+        return False
+
+    update: dict = {
+        "review_state":        firestore.DELETE_FIELD,
+        "review_instructions": firestore.DELETE_FIELD,
+        "review_targets":      firestore.DELETE_FIELD,
+        "review_state_cleared_at": firestore.SERVER_TIMESTAMP,
+    }
+    if reason:
+        update["review_state_cleared_reason"] = reason
+    ref.update(update)
+    return True
 
 
 def _env() -> tuple[str, str]:
@@ -87,39 +115,21 @@ def main() -> int:
     creds = service_account.Credentials.from_service_account_file(key_path)
     client = firestore.Client(project=project, credentials=creds)
 
-    ref = (
-        client.collection("brands")
-        .document(args.brand_slug)
-        .collection("drafts")
-        .document(args.draft_id)
-    )
-
     try:
-        snap = ref.get()
+        ok = clear_flags(client, args.brand_slug, args.draft_id, reason=args.reason)
     except Exception as exc:  # pylint: disable=broad-except
-        sys.stderr.write(f"error: Firestore read failed: {exc}\n")
+        sys.stderr.write(f"error: Firestore update failed: {exc}\n")
         return 1
 
-    if not snap.exists:
+    if not ok:
         sys.stderr.write(
             f"error: draft {args.draft_id} not found under "
             f"brands/{args.brand_slug}/drafts.\n"
         )
         return 1
 
-    update: dict = {"review_state": firestore.DELETE_FIELD}
-    if args.reason:
-        update["review_state_cleared_reason"] = args.reason
-    update["review_state_cleared_at"] = firestore.SERVER_TIMESTAMP
-
-    try:
-        ref.update(update)
-    except Exception as exc:  # pylint: disable=broad-except
-        sys.stderr.write(f"error: Firestore update failed: {exc}\n")
-        return 1
-
     print(
-        f"cleared review_state on brands/{args.brand_slug}/drafts/{args.draft_id}"
+        f"cleared review flags on brands/{args.brand_slug}/drafts/{args.draft_id}"
     )
     return 0
 
