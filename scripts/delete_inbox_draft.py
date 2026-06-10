@@ -12,6 +12,11 @@ This script unconditionally deletes the doc. The orchestrator is
 responsible for ordering the call AFTER a confirmed submit so that a
 submit failure cannot strand the original.
 
+The draft's ``images`` subcollection is swept first — Firestore does not
+cascade subcollection deletes, so skipping this would orphan the hero
+image doc. The sweep also runs when the draft doc is already absent
+(heals orphans left by earlier deletes that predate this behaviour).
+
 Environment
 -----------
 * ``QANT_BLOG_DRAFTS_PROJECT_ID``
@@ -42,6 +47,30 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+
+
+def delete_draft(client, brand_slug: str, draft_id: str) -> str:
+    """Sweep images subcollection, then delete the draft doc.
+
+    Returns ``"deleted"`` or ``"already_absent"`` (idempotent — the
+    orchestrator may call this twice after a partial retry). The images
+    sweep runs in both cases because subcollections survive parent
+    deletion in Firestore.
+    """
+    ref = (
+        client.collection("brands")
+        .document(brand_slug)
+        .collection("drafts")
+        .document(draft_id)
+    )
+    for image_snap in ref.collection("images").stream():
+        image_snap.reference.delete()
+
+    snap = ref.get()
+    if not snap.exists:
+        return "already_absent"
+    ref.delete()
+    return "deleted"
 
 
 def _env() -> tuple[str, str]:
@@ -85,34 +114,14 @@ def main() -> int:
     creds = service_account.Credentials.from_service_account_file(key_path)
     client = firestore.Client(project=project, credentials=creds)
 
-    ref = (
-        client.collection("brands")
-        .document(args.brand_slug)
-        .collection("drafts")
-        .document(args.draft_id)
-    )
-
     try:
-        snap = ref.get()
-    except Exception as exc:  # pylint: disable=broad-except
-        sys.stderr.write(f"error: Firestore read failed: {exc}\n")
-        return 1
-
-    if not snap.exists:
-        # Idempotent: nothing to delete is success. The orchestrator might
-        # call this twice (e.g. after a partial retry) and that should not
-        # be a hard failure.
-        print(f"already_absent brands/{args.brand_slug}/drafts/{args.draft_id}")
-        return 0
-
-    try:
-        ref.delete()
+        result = delete_draft(client, args.brand_slug, args.draft_id)
     except Exception as exc:  # pylint: disable=broad-except
         sys.stderr.write(f"error: Firestore delete failed: {exc}\n")
         return 1
 
-    suffix = f" reason={args.reason!r}" if args.reason else ""
-    print(f"deleted brands/{args.brand_slug}/drafts/{args.draft_id}{suffix}")
+    suffix = f" reason={args.reason!r}" if (args.reason and result == "deleted") else ""
+    print(f"{result} brands/{args.brand_slug}/drafts/{args.draft_id}{suffix}")
     return 0
 
 
