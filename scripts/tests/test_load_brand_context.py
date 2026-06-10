@@ -3,6 +3,12 @@
 Stdlib + pytest only. No network. All file ops use tmp_path. Never depends
 on the live qant brand directories — every test builds a synthetic brand
 under a tmp dir and passes `--brands-root`.
+
+Tests the POST-E4.5 contract: the loader returns
+``{brand_slug, brand_dir, env_file, brand_domain, brand_identity}``.
+The retired surface (``brand_key`` / ``api_url`` outputs, ``--staging`` /
+``--development`` flags, disk author enumeration) is asserted ABSENT —
+see the canonical spec §7 retirement table.
 """
 
 from __future__ import annotations
@@ -48,69 +54,77 @@ def _make_brand(
 # ---------------------------------------------------------------------------
 
 
-def test_loads_brand_key_and_api_url_from_env(tmp_path: Path):
+def test_loads_core_context_shape(tmp_path: Path):
     mod = _import_helper()
     _make_brand(
         tmp_path,
         "acme",
-        env_files={
-            ".env.stg": (
-                "# brand env\n"
-                "BRAND_KEY=brk_abc123\n"
-                "API_URL=https://api-stg.example.com\n"
-            )
-        },
+        env_files={".env": "NEXT_PUBLIC_BRAND_DOMAIN=acme.example.com\n"},
         seo_yml="brand: acme\ndisplay_name: Acme Cyber\n",
     )
-    ctx = mod.load_brand_context("acme", staging=True, brands_root=tmp_path)
+    ctx = mod.load_brand_context("acme", brands_root=tmp_path)
     assert ctx["brand_slug"] == "acme"
-    assert ctx["brand_key"] == "brk_abc123"
-    assert ctx["api_url"] == "https://api-stg.example.com"
-    assert ctx["env_file"].endswith(".env.stg")
+    assert ctx["brand_dir"].endswith("/acme")
+    assert ctx["env_file"].endswith("/.env")
+    assert ctx["brand_domain"] == "acme.example.com"
     assert ctx["brand_identity"]["display_name"] == "Acme Cyber"
 
 
-def test_accepts_next_public_brand_key(tmp_path: Path):
-    mod = _import_helper()
-    _make_brand(
-        tmp_path,
-        "rbc",
-        env_files={
-            ".env.stg": (
-                "NEXT_PUBLIC_BRAND_ENV=stg\n"
-                "NEXT_PUBLIC_BRAND_KEY=brk_xyz\n"
-            )
-        },
-    )
-    ctx = mod.load_brand_context("rbc", staging=True, brands_root=tmp_path)
-    assert ctx["brand_key"] == "brk_xyz"
-    # API URL derived from NEXT_PUBLIC_BRAND_ENV=stg → api-stg.qant.au
-    assert ctx["api_url"] == "https://api-stg.qant.au"
-
-
-def test_default_env_when_no_flag(tmp_path: Path):
+def test_retired_fields_are_absent(tmp_path: Path):
+    """brand_key / api_url were retired in E4.5 — the SA env-var pair
+    replaced them. They must never reappear in the payload."""
     mod = _import_helper()
     _make_brand(
         tmp_path,
         "acme",
-        env_files={".env": "BRAND_KEY=brk_prod\nAPI_URL=https://api.example.com\n"},
+        env_files={".env": "BRAND_KEY=brk_legacy\nAPI_URL=https://api.example\n"},
+    )
+    ctx = mod.load_brand_context("acme", brands_root=tmp_path)
+    assert "brand_key" not in ctx
+    assert "api_url" not in ctx
+    assert "authors" not in ctx  # disk enumeration retired in F-post
+
+
+def test_env_flags_are_retired():
+    """--staging / --development kwargs were dropped in E4.5."""
+    mod = _import_helper()
+    with pytest.raises(TypeError):
+        mod.load_brand_context("acme", staging=True)
+    with pytest.raises(TypeError):
+        mod.load_brand_context("acme", development=True)
+
+
+def test_env_file_precedence_env_first(tmp_path: Path):
+    mod = _import_helper()
+    _make_brand(
+        tmp_path,
+        "acme",
+        env_files={
+            ".env":     "NEXT_PUBLIC_BRAND_DOMAIN=prod.example.com\n",
+            ".env.stg": "NEXT_PUBLIC_BRAND_DOMAIN=stg.example.com\n",
+        },
     )
     ctx = mod.load_brand_context("acme", brands_root=tmp_path)
     assert ctx["env_file"].endswith("/.env")
-    assert ctx["api_url"] == "https://api.example.com"
+    assert ctx["brand_domain"] == "prod.example.com"
 
 
-def test_development_flag_picks_env_dev(tmp_path: Path):
+def test_missing_env_file_is_soft(tmp_path: Path):
+    """No env file is a soft miss — brand_domain falls back to the YAML's
+    canonical.marketing host."""
     mod = _import_helper()
     _make_brand(
         tmp_path,
         "acme",
-        env_files={".env.dev": "BRAND_KEY=brk_dev\n"},
+        seo_yml=(
+            "brand: acme\n"
+            "canonical:\n"
+            "  marketing: https://acme.example.com/\n"
+        ),
     )
-    ctx = mod.load_brand_context("acme", development=True, brands_root=tmp_path)
-    assert ctx["env_file"].endswith(".env.dev")
-    # No API_URL in env → fallback to dev default.
-    assert ctx["api_url"] == "http://localhost:8000"
+    ctx = mod.load_brand_context("acme", brands_root=tmp_path)
+    assert ctx["env_file"] is None
+    assert ctx["brand_domain"] == "acme.example.com"
 
 
 def test_missing_brand_raises(tmp_path: Path):
@@ -119,35 +133,18 @@ def test_missing_brand_raises(tmp_path: Path):
         mod.load_brand_context("nope", brands_root=tmp_path)
 
 
-def test_missing_env_file_raises(tmp_path: Path):
-    mod = _import_helper()
-    _make_brand(tmp_path, "acme", env_files={".env": "BRAND_KEY=x\n"})
-    # We ask for staging but only `.env` exists.
-    with pytest.raises(FileNotFoundError):
-        mod.load_brand_context("acme", staging=True, brands_root=tmp_path)
-
-
-def test_missing_brand_key_raises(tmp_path: Path):
-    mod = _import_helper()
-    _make_brand(tmp_path, "acme", env_files={".env": "API_URL=https://x.example\n"})
-    with pytest.raises(KeyError):
-        mod.load_brand_context("acme", brands_root=tmp_path)
-
-
 def test_env_parser_handles_quotes_comments_and_export(tmp_path: Path):
     mod = _import_helper()
     body = (
         "# comment line\n"
         "\n"
-        "BRAND_KEY=\"brk_quoted\"\n"
-        "API_URL='https://api.example.com'\n"
-        "export NEXT_PUBLIC_BRAND_ENV=stg\n"
+        "NEXT_PUBLIC_BRAND_DOMAIN=\"quoted.example.com\"\n"
+        "export OTHER_VAR=stg\n"
         "STRAY_INLINE=value # trailing comment\n"
     )
     _make_brand(tmp_path, "acme", env_files={".env": body})
     ctx = mod.load_brand_context("acme", brands_root=tmp_path)
-    assert ctx["brand_key"] == "brk_quoted"
-    assert ctx["api_url"] == "https://api.example.com"
+    assert ctx["brand_domain"] == "quoted.example.com"
 
 
 def test_seo_yml_extracts_canonical_and_target_keywords(tmp_path: Path):
@@ -162,12 +159,7 @@ def test_seo_yml_extracts_canonical_and_target_keywords(tmp_path: Path):
         "  - cyber hygiene\n"
         "  - \"SMB security\"\n"
     )
-    _make_brand(
-        tmp_path,
-        "acme",
-        env_files={".env": "BRAND_KEY=brk_x\n"},
-        seo_yml=seo,
-    )
+    _make_brand(tmp_path, "acme", seo_yml=seo)
     ctx = mod.load_brand_context("acme", brands_root=tmp_path)
     identity = ctx["brand_identity"]
     assert identity["display_name"] == "Acme Cyber"
@@ -178,18 +170,21 @@ def test_seo_yml_extracts_canonical_and_target_keywords(tmp_path: Path):
 
 def test_missing_seo_yml_is_silent(tmp_path: Path):
     mod = _import_helper()
-    _make_brand(tmp_path, "acme", env_files={".env": "BRAND_KEY=brk_x\n"})
+    _make_brand(tmp_path, "acme", env_files={".env": "X=1\n"})
     ctx = mod.load_brand_context("acme", brands_root=tmp_path)
     assert ctx["brand_identity"] == {}
 
 
-def test_staging_and_development_mutually_exclusive(tmp_path: Path):
+def test_list_brands_enumerates_seo_yml_dirs(tmp_path: Path):
     mod = _import_helper()
-    _make_brand(tmp_path, "acme", env_files={".env": "BRAND_KEY=brk_x\n"})
-    with pytest.raises(ValueError):
-        mod.load_brand_context(
-            "acme", staging=True, development=True, brands_root=tmp_path
-        )
+    _make_brand(tmp_path, "acme", seo_yml="display_name: Acme\n")
+    _make_brand(tmp_path, "zeta", seo_yml="brand: zeta\n")
+    _make_brand(tmp_path, "no-yml")  # excluded — no .brand-seo.yml
+    out = mod.list_brands(tmp_path)
+    assert out == [
+        {"slug": "acme", "display_name": "Acme"},
+        {"slug": "zeta", "display_name": "zeta"},
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -206,78 +201,51 @@ def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_cli_emits_json_with_brand_key(tmp_path: Path):
+def test_cli_emits_context_json(tmp_path: Path):
     _make_brand(
         tmp_path,
         "acme",
-        env_files={".env.stg": "BRAND_KEY=brk_secret\nAPI_URL=https://api.example\n"},
+        env_files={".env": "NEXT_PUBLIC_BRAND_DOMAIN=acme.example.com\n"},
         seo_yml="display_name: Acme\n",
     )
-    proc = _run(
-        [
-            "--brand",
-            "acme",
-            "--staging",
-            "--brands-root",
-            str(tmp_path),
-        ]
-    )
+    proc = _run(["--brand", "acme", "--brands-root", str(tmp_path)])
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
-    assert payload["brand_key"] == "brk_secret"
-    assert payload["api_url"] == "https://api.example"
+    assert payload["brand_slug"] == "acme"
+    assert payload["brand_domain"] == "acme.example.com"
+    assert "brand_key" not in payload
+    assert "api_url" not in payload
 
 
-def test_cli_redact_key_zeroes_key(tmp_path: Path):
-    _make_brand(
-        tmp_path,
-        "acme",
-        env_files={".env": "BRAND_KEY=brk_secret\n"},
-    )
-    proc = _run(
-        [
-            "--brand",
-            "acme",
-            "--redact-key",
-            "--brands-root",
-            str(tmp_path),
-        ]
-    )
+def test_cli_list_brands(tmp_path: Path):
+    _make_brand(tmp_path, "acme", seo_yml="display_name: Acme\n")
+    proc = _run(["--list-brands", "--brands-root", str(tmp_path)])
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
-    assert payload["brand_key"] is None
-    # Plain-text scan: secret must not appear anywhere in stdout.
-    assert "brk_secret" not in proc.stdout
+    assert payload == [{"slug": "acme", "display_name": "Acme"}]
+
+
+def test_cli_staging_flag_is_gone(tmp_path: Path):
+    _make_brand(tmp_path, "acme", seo_yml="display_name: Acme\n")
+    proc = _run(["--brand", "acme", "--staging", "--brands-root", str(tmp_path)])
+    assert proc.returncode != 0  # argparse rejects the retired flag
 
 
 def test_cli_missing_brand_exits_nonzero(tmp_path: Path):
-    proc = _run(
-        [
-            "--brand",
-            "nope",
-            "--brands-root",
-            str(tmp_path),
-        ]
-    )
+    proc = _run(["--brand", "nope", "--brands-root", str(tmp_path)])
     assert proc.returncode != 0
     assert "Error" in proc.stderr
 
 
-def test_cli_does_not_leak_key_to_stderr(tmp_path: Path):
+def test_cli_does_not_leak_env_secrets(tmp_path: Path):
+    """Legacy env files may still carry BRAND_KEY lines; the loader must
+    not echo their values anywhere in its output."""
     _make_brand(
         tmp_path,
         "acme",
-        env_files={".env": "BRAND_KEY=brk_very_secret\n"},
+        env_files={".env": "BRAND_KEY=brk_very_secret\nNEXT_PUBLIC_BRAND_DOMAIN=a.example\n"},
     )
-    proc = _run(
-        [
-            "--brand",
-            "acme",
-            "--brands-root",
-            str(tmp_path),
-        ]
-    )
+    proc = _run(["--brand", "acme", "--brands-root", str(tmp_path)])
     assert proc.returncode == 0
+    assert "brk_very_secret" not in proc.stdout
     assert "brk_very_secret" not in proc.stderr
-    # And it IS in stdout (the legitimate emit path).
-    assert "brk_very_secret" in proc.stdout
