@@ -651,6 +651,24 @@ Steps:
 
 1. **Capability discovery + hero**: run `python scripts/blog_preflight.py --draft <folder> --gate 1` to enumerate available paths. If `nanobanana-mcp` is loaded, generate the hero via the MCP tool. Otherwise run `python scripts/generate_hero.py --topic "<title>" --tags "<tags>" --out <folder>` (uses the Gemini, Unsplash, Pexels, Pixabay, Openverse ladder).
 
+   **1a. Convert for blog use**: normalise the hero to 1200x630 WebP:
+
+   ```bash
+   magick <folder>/hero.<ext> -resize 1200x630^ -gravity center -extent 1200x630 -quality 80 <folder>/hero.webp
+   ```
+
+   (No ImageMagick? `sips -z 630 1200 hero.<ext> --out hero.png` then convert; install `imagemagick` for WebP output.)
+
+   **1b. Agent visual review (mandatory when `--brand` is set)**: Read `<folder>/hero.webp` with the Read tool (it renders the image) and judge it against this checklist — ALL must pass:
+
+   - Depicts the article's actual subject, not a generic abstraction.
+   - No text artifacts or garbled lettering anywhere in the frame.
+   - No AI-slop tells: extra limbs/fingers, melted or fused objects, uncanny faces, impossible geometry.
+   - Palette and tone fit the brand identity resolved in Phase 0.5.
+   - Reads clearly at thumbnail size (the Blog Manager sidebar shows it ~270px wide).
+
+   On failure: regenerate with a corrected prompt that names the specific defect ("no text overlays", "hands out of frame", …). **Maximum 2 regeneration retries.** After 2 failures, fall back to the stock-photo ladder and review that result against the same checklist. If stock also fails, proceed WITHOUT a hero and note it in the Phase 7 summary — never block the article on the image.
+
 2. **Format completeness**: render the canonical `.md` to `.html` and `.pdf` via `python scripts/blog_render.py --md <slug>.md --out-dir <folder>`. All three artifacts plus `hero.<ext>` must end up in the draft folder.
 
 3. **Content review (blocking)**: dispatch the `blog-reviewer` agent (Task tool) against the rendered `.html`. The agent emits its scorecard to `<folder>/review.md` ending with `BLOCKING: true|false (reason)`. Threshold: overall score 90/100 or higher AND zero P0 issues per `editorial-heuristics.md`.
@@ -663,9 +681,11 @@ The orchestrator holds the loop counter; this sub-skill never loops itself.
 
 ### Phase 7 ordering
 
-After Phase 6.5 passes, the next two phases run in order: Phase 7 (deliver
-the article locally — always runs) and Phase 7.5 (submit to qant — only
-runs when `--brand` is set, after local delivery).
+After Phase 6.5 passes, the next phases run in order: Phase 7 (deliver
+the article locally — always runs), Phase 7.5 (submit to qant — only
+runs when `--brand` is set, after local delivery), and Phase 7.6 (attach
+the reviewed hero image to the submitted draft — only after a successful
+Phase 7.5).
 
 ### Phase 7.5: Draft submission (only if `--brand` is set)
 
@@ -764,6 +784,36 @@ in Phase 0.5, ship the draft to the brand's instance.
    error tells the operator to create the author via the Blog Manager
    UI first); IAM denied (exit 1 with the google-cloud-firestore
    error); network unreachable (exit 1).
+
+### Phase 7.6: Hero image attach (only after a successful Phase 7.5)
+
+Ship the Phase 6.5 reviewed hero alongside the draft so the Blog Manager
+shows it in the review sidebar. Uses the `draft_id` returned by
+`submit_draft_firestore.py`:
+
+```bash
+python3 scripts/attach_draft_image.py \\
+    --brand-slug "<brand_slug>" \\
+    --draft-id   "<draft_id from Phase 7.5>" \\
+    --image      "<folder>/hero.webp" \\
+    --mime image/webp --width 1200 --height 630 \\
+    --source banana   # or gemini-direct / stock, matching how the hero was produced
+```
+
+- **Exit 3 (payload too large)**: re-encode at lower quality and retry —
+  `magick <folder>/hero.webp -quality 65 <folder>/hero.webp`, then
+  `-quality 50` on a second exit 3. A 1200x630 WebP at q50 is far below
+  the gate; a third failure means something is wrong with the source
+  image — fall through to the failure handling below.
+- **No hero exists** (Phase 6.5 proceeded imageless): skip this phase
+  silently; the Blog Manager shows "No image attached".
+- **On any other failure**: warn and continue — the draft is already
+  submitted and stands on its own. The operator can flag an image-only
+  rewrite from the Blog Manager to attach one later. NEVER fail the
+  submission over the image.
+
+On success, include `images/hero` in the Phase 7 summary's draft_path
+line (e.g. `brands/<slug>/drafts/<id> (+ images/hero)`).
 
 ### Phase 7: Delivery
 
