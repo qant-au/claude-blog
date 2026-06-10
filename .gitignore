@@ -101,3 +101,9 @@ definitive-resesarch-blueprint-for-claude-blog.md
 
 # Scout posture scans — session artefacts, regenerable
 scout-out/
+
+# Superpowers per-session staging — never committed
+.superpowers/
+
+# graphify local index (rebuilt by post-commit hook)
+graphify-out/
