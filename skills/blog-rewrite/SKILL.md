@@ -42,10 +42,10 @@ as `blog-write`:
 
 | Flag | Effect on workflow |
 |------|--------------------|
-| `--brand <slug>` | Phase 0.5 resolves brand context; identity injected into the rewrite prompt; Phase 7 submits the rewritten draft to the brand's qant API. |
-| `--author <slug>` | Phase 0.6 fetches the FULL author doc via `python3 scripts/load_brand_context.py --get-author <slug> --brand <brand_slug>` (qant-blog-drafts, managed in Axiom: Instance Config → Brands → Authors); `writing_style` + structured-voice fields shape the rewrite prompt; `bio` is rendered into the article foot; `byline` populates frontmatter byline. **Never read `author-profile-*.json` or any other on-disk author file**: the Firestore doc is the live record. |
-| `--from-queue` | **Queue mode** (v1.9.2). Skip the positional `<file-path>` argument; instead pull every draft flagged for rewrite in `qant-blog-drafts.brands/{brand_slug}/drafts/{*}` (`review_state == "needs_rewrite"`) and rewrite each one in sequence. When combined with `--brand <slug>`, the drain is scoped to that one brand. With `--all-brands` (or no `--brand`), the drain enumerates every brand in `qant-blog-drafts.brands/` and merges the queues. See *Queue mode (Phase 0.3)* below. |
-| `--all-brands` | Multi-brand queue mode (v1.10). Implies `--from-queue`. Enumerates `qant-blog-drafts.brands/*` and rewrites every flagged draft across every brand in one pass. **This is the default when `/blog rewrite` is invoked with NO arguments** — see *Phase 0: argument dispatch* for the auto-mode contract. |
+| `--brand <slug>` | Phase 0.5 resolves brand context; identity injected into the rewrite prompt; Phase 5.6 submits the rewritten draft to the brand's instance via the QANT brand-blog API (brand-key auth). |
+| `--author <slug>` | Phase 0.6 fetches the FULL author doc via `python3 scripts/load_brand_context.py --get-author <slug> --brand <brand_slug>` (brand-blog API `GET /brand/blog/authors/{slug}`, managed in Axiom: Instances → Brands → Authors); `writing_style` + structured-voice fields shape the rewrite prompt; `bio` is rendered into the article foot; `byline` populates frontmatter byline. **Never read `author-profile-*.json` or any other on-disk author file**: the API-served doc is the live record. |
+| `--from-queue` | **Queue mode** (v1.9.2). Skip the positional `<file-path>` argument; instead pull every article flagged for rewrite (`review_state == "needs_rewrite"`, read via `GET /brand/blog/rewrites` with the brand's key) and rewrite each one in sequence. When combined with `--brand <slug>`, the drain is scoped to that one brand. With `--all-brands` (or no `--brand`), the drain enumerates every brand dir under `/Users/adam/Projects/qant/brands/` that has a brand key in its env file and merges the queues. See *Queue mode (Phase 0.3)* below. |
+| `--all-brands` | Multi-brand queue mode (v1.10). Implies `--from-queue`. Enumerates the brand dirs with keys and rewrites every flagged draft across every brand in one pass. **This is the default when `/blog rewrite` is invoked with NO arguments** — see *Phase 0: argument dispatch* for the auto-mode contract. |
 | `--no-submit` | Skips the submission phase entirely. |
 
 See `skills/blog-write/SKILL.md` Phase 0.5 and 0.6 for the exact resolution
@@ -57,7 +57,7 @@ and loading steps — the rewrite path applies the same procedure verbatim.
 
 The operator never wants the skill to ask questions about which draft to
 rewrite or which brand to scope to. The dispatch is fully derivable from
-the arguments and the qant-blog-drafts state. Resolve in this order; do
+the arguments and the rewrite-queue state. Resolve in this order; do
 NOT prompt the operator at any branch.
 
 | Argument shape | Mode |
@@ -86,13 +86,14 @@ combined with the dispatch above suppresses it.
 
 The operator-facing trigger here is "I don't want to go hunting for
 articles that need a rewrite — read every flagged draft, rewrite it, clear
-the flag." Drafts get flagged via the Blog Manager UI by setting the
-top-level field `review_state: "needs_rewrite"` (UI work tracked as
-qnt-045 in `/Users/adam/Projects/qant/TODO.md`). The skill never sets that
+the flag." Articles get flagged in Axiom (Instances → (instance) →
+Brands → (brand) → Articles → Rewrite), which sets the top-level field
+`review_state: "needs_rewrite"`. The skill never sets that
 field itself — it only consumes the flag and clears it on success.
 
-**1. Fetch the queue.** Required env vars: `QANT_BLOG_DRAFTS_PROJECT_ID`
-and `QANT_BLOG_DRAFTS_WRITER_KEY`.
+**1. Fetch the queue.** No env vars needed — each brand is queried via
+`GET /brand/blog/rewrites` with its own `NEXT_PUBLIC_BRAND_KEY`
+(resolved from the brand dir's env file by `scripts/qant_api.py`).
 
 ```bash
 # Multi-brand drain (default for arg-less `/blog rewrite`):
@@ -121,19 +122,20 @@ In multi-brand mode, the Phase 0.5 brand-context resolution
 
 **2. Iterate per draft.** For each entry:
 
-a. Read the full draft doc from Firestore (the list script returns
+a. Read the full article doc via the API (the list script returns
    identifiers + summary, not the body — fetch the body fresh so the
    rewrite acts on the current content):
    ```python
-   db.collection("brands").document(brand_slug) \\
-     .collection("drafts").document(draft_id).get().to_dict()
+   import qant_api  # scripts/qant_api.py
+   doc = qant_api.request(brand_slug, "GET",
+                          f"/brand/blog/articles/{draft_id}")
    ```
 
-b. Use the doc's `author.slug` as the resolved author for Phase 0.6 (no
+b. Use the doc's `author_slug` as the resolved author for Phase 0.6 (no
    prompt; the flagged draft carries its own author), then fetch that
    author's FULL doc:
    ```bash
-   python3 scripts/load_brand_context.py --get-author <author.slug> --brand <brand_slug>
+   python3 scripts/load_brand_context.py --get-author <author_slug> --brand <brand_slug>
    ```
    The JSON on stdout supplies the author-voice block for the rewrite
    prompt (`writing_style` + the structured-voice fields), the
@@ -144,7 +146,7 @@ b. Use the doc's `author.slug` as the resolved author for Phase 0.6 (no
    "detect format" step — the body is markdown).
 
 b.1. **Read `review_instructions` from the doc** (top-level field, sibling
-   to `review_state`). The Blog Manager UI's Rewrite modal lets the
+   to `review_state`). Axiom's Rewrite modal lets the
    operator type free-form guidance — for example, "remove the SCIF
    reference, replace with: at a conference with a senior federal
    government representative presenting", or "drop the third subhead;
@@ -180,11 +182,11 @@ c. Run Phase 1 (Audit), Phase 2 (Research), Phase 3 (Chart Generation),
    exactly as the file-path path does. The brand context loaded in
    Phase 0.5 applies.
 
-d. Phase 5.6 (Draft submission) writes the rewritten draft via
-   `submit_draft_firestore.py` with the same `--brand-slug` and
-   `--author <author_slug>`. The submit path writes a NEW doc with a
-   fresh auto-id; step e then deletes the original so the operator
-   never sees a duplicate in the Drafts rail.
+d. Phase 5.6 (Draft submission) submits the rewritten draft via
+   `submit_draft.py` with the same `--brand-slug` and
+   `--author <author_slug>`. The submit path creates a NEW article with
+   a fresh auto-id; step e then deletes the original so the operator
+   never sees a duplicate in the Axiom Articles list.
 
 d.1. **Content-only branch — carry the hero across.** After Phase 5.6
    returns the new `draft_id`, copy the original's hero image to the
@@ -226,7 +228,7 @@ d.3. **Image-only branch — in-place update, nothing else moves.** The
           --width 1200 --height 630 --source banana
       ```
       The doc's `state` resets to `generated` so the operator re-reviews
-      it in the Blog Manager image modal.
+      it in the Axiom image modal.
    4. Clear the flag trio so the queue does not re-surface the draft:
       ```bash
       python3 scripts/clear_review_state.py \\
@@ -237,10 +239,11 @@ d.3. **Image-only branch — in-place update, nothing else moves.** The
       end-of-run summary.
 
 e. **After Phase 5.6 returns success AND step d.1/d.2 has run** — the
-   rewritten draft is committed to
-   `qant-blog-drafts.brands/{brand_slug}/drafts/{new_id}` and its hero
-   is in place — DELETE the original flagged doc outright (the delete
-   cascades the original's `images` subcollection, so the copy in d.1
+   rewritten article is committed to the brand's instance Firestore
+   (`instances/{id}/brands/{slug}/blog_posts/{new_id}`) and its hero
+   is in place — DELETE the original flagged article outright via
+   `DELETE /brand/blog/articles/{id}` (the server cascades the
+   original's images subcollection, so the copy in d.1
    must complete first):
    ```bash
    python3 scripts/delete_inbox_draft.py \\
@@ -256,7 +259,7 @@ e. **After Phase 5.6 returns success AND step d.1/d.2 has run** — the
    **Order matters.** Do NOT delete the original before submit
    succeeds. A submit failure with the original already deleted is
    data loss. If Phase 5.6 fails, SKIP step e entirely so the original
-   stays in qant-blog-drafts with its `review_state: "needs_rewrite"`
+   stays in the brand's instance with its `review_state: "needs_rewrite"`
    flag intact and the next queue pass retries.
 
    The older `clear_review_state.py` helper still exists for the manual
@@ -273,27 +276,15 @@ the failure reason per draft). Treat the run as successful (exit 0) if
 at least one draft processed cleanly; treat it as failure (exit 1) only
 if EVERY draft failed.
 
-**4. Testing pattern (before the UI ships).** To exercise the queue
-mode without the Blog Manager UI, set the flag manually via a one-shot
-admin script:
-
-```python
-from google.cloud import firestore
-from google.oauth2 import service_account
-import os
-creds = service_account.Credentials.from_service_account_file(
-    os.environ["QANT_BLOG_DRAFTS_WRITER_KEY"])
-db = firestore.Client(project=os.environ["QANT_BLOG_DRAFTS_PROJECT_ID"],
-                      credentials=creds)
-db.collection("brands/redbridgecyber/drafts").document(
-    "<draft-id>").update({"review_state": "needs_rewrite"})
-```
+**4. Testing pattern.** To exercise the queue mode, flag an article in
+Axiom: Instances → (instance) → Brands → redbridgecyber → Articles →
+Rewrite (optionally adding instructions and targets).
 
 Then run `/blog rewrite --from-queue --brand redbridgecyber` and watch
 the round-trip.
 
 **5. Future-state note (obsolete).** ~~When the slug-based upsert
-ships in `submit_draft_firestore.py` (qnt-046), Phase 0.3 step e
+ships in the draft submitter (qnt-046), Phase 0.3 step e
 becomes redundant — the upsert overwrites the same doc, the new
 payload doesn't carry `review_state`, and the flag is cleared as a
 side effect of the overwrite.~~ Superseded: step e now deletes the
@@ -646,25 +637,22 @@ as `blog-write` Phase 7.5:
    - Otherwise → submit. The contributor invoked the skill; they want
      the draft saved. No env-flag-dependent prompt.
 
-3. **Submit** — writes to the shared `qant-blog-drafts` Firestore
-   project via the writer service-account key (separate Firebase project
-   from any instance — credential blast radius is "blog drafts only").
-   Auth is via two env vars set in the contributor's shell:
-
-   - `QANT_BLOG_DRAFTS_PROJECT_ID` — e.g. `qant-blog-drafts`
-   - `QANT_BLOG_DRAFTS_WRITER_KEY` — absolute path to writer SA JSON
+3. **Submit** — POSTs to the QANT brand-blog API
+   (`POST /brand/blog/articles`, `X-Brand-Key` header). Auth is the
+   brand's own `brk_` key, resolved from the brand dir's env file by
+   `scripts/qant_api.py` — no env vars to set:
 
    ```bash
-   python3 scripts/submit_draft_firestore.py \\
+   python3 scripts/submit_draft.py \\
        --brand-slug "<brand_slug from Phase 0.5>" \\
        --author "<author_slug from Phase 0.6>" \\
        --payload "<draft-folder>/submission.json"
    ```
 
-   The script verifies the author exists in
-   `qant-blog-drafts.brands/{brand_slug}/authors/{author_slug}` and
-   fails fast with a "create the author in Axiom first"
-   message if it doesn't. Report the returned `draft_path` to the user.
+   The server validates the author and joins the canonical name from
+   the author doc; the script fails fast with a "create the author in
+   Axiom first" message when the slug is unknown. Report the returned
+   `draft_path` to the user.
 
 4. **On failure**: surface the script's stderr verbatim, write the
    payload to `<draft-folder>/submission.json` (so the user can retry

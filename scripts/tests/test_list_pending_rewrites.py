@@ -1,12 +1,10 @@
-"""Behavioral tests for scripts/list_pending_rewrites.py row shaping.
-
-Stdlib + pytest only — exercises the pure row builder, no Firestore.
-"""
+"""Behavioral tests for scripts/list_pending_rewrites.py (API-over-brand-key)."""
 
 from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
+from unittest.mock import MagicMock
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 HELPER = ROOT / "scripts" / "list_pending_rewrites.py"
@@ -20,40 +18,46 @@ def _import_helper():
     return mod
 
 
-def _doc(**extra) -> dict:
-    return {
-        "title":         "Flagged draft",
-        "slug":          "flagged-draft",
-        "category":      "ir",
-        "author":        {"slug": "adam", "name": "Adam"},
+def _article(**over):
+    d = {
+        "id": "bpost_1",
+        "slug": "test-post",
+        "title": "Test Post",
+        "category": "security",
+        "author": {"slug": "adam-burgess", "name": "Adam Burgess"},
         "body_markdown": "one two three",
-        "review_state":  "needs_rewrite",
-        **extra,
+        "metadata": {
+            "review_state": "needs_rewrite",
+            "review_instructions": "Fix intro",
+            "review_targets": {"content": True, "image": False},
+        },
     }
+    d.update(over)
+    return d
 
 
-def test_row_includes_review_targets():
+def test_rows_match_legacy_queue_shape():
     mod = _import_helper()
-    row = mod._row(
-        "redbridgecyber", "brands/redbridgecyber/drafts", "d1",
-        _doc(review_targets={"content": False, "image": True}),
-    )
-    assert row["review_targets"] == {"content": False, "image": True}
-
-
-def test_row_defaults_targets_when_absent():
-    """Legacy flagged drafts predate review_targets — default content-only."""
-    mod = _import_helper()
-    row = mod._row("redbridgecyber", "brands/redbridgecyber/drafts", "d1", _doc())
-    assert row["review_targets"] == {"content": True, "image": False}
-
-
-def test_row_keeps_existing_fields():
-    mod = _import_helper()
-    row = mod._row("redbridgecyber", "brands/redbridgecyber/drafts", "d1", _doc())
+    request_fn = MagicMock(return_value={"items": [_article()]})
+    rows = mod.query_brand(request_fn, "redbridgecyber")
+    assert request_fn.call_args.args[1] == "GET"
+    assert request_fn.call_args.args[2] == "/brand/blog/rewrites"
+    row = rows[0]
     assert row["brand_slug"] == "redbridgecyber"
-    assert row["draft_id"] == "d1"
-    assert row["draft_path"] == "brands/redbridgecyber/drafts/d1"
-    assert row["slug"] == "flagged-draft"
-    assert row["author_slug"] == "adam"
+    assert row["draft_id"] == "bpost_1"
+    assert row["slug"] == "test-post"
+    assert row["title"] == "Test Post"
+    assert row["author_slug"] == "adam-burgess"
+    assert row["category"] == "security"
+    assert row["review_state"] == "needs_rewrite"
+    assert row["review_targets"] == {"content": True, "image": False}
     assert row["word_count"] == 3
+
+
+def test_rows_default_targets_content_only_for_legacy_flags():
+    mod = _import_helper()
+    art = _article()
+    art["metadata"] = {"review_state": "needs_rewrite"}
+    request_fn = MagicMock(return_value={"items": [art]})
+    rows = mod.query_brand(request_fn, "redbridgecyber")
+    assert rows[0]["review_targets"] == {"content": True, "image": False}

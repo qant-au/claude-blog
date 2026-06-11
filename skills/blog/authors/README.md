@@ -7,10 +7,12 @@
 > (`qant-common/docs/system/ops/blog.md`).
 
 The `skills/blog/authors/<slug>/` disk-bundle layout was retired in
-Phase F-post (June 2026). Authors are now managed via the **Blog Manager
-UI** in the QANT consumer app, with the data stored in the
-`qant-blog-drafts` Firestore project at
-`brands/{brand_slug}/authors/{slug}`.
+Phase F-post (June 2026). Authors are now managed in **Axiom**
+(Instances → (instance) → Brands → (brand) → Authors), with the data
+stored in the brand's instance Firestore at
+`instances/{id}/brands/{slug}/authors` and reached only via the QANT
+brand-blog API (`GET /brand/blog/authors[/{slug}]`, authenticated with
+the brand's `brk_` key).
 
 Every author carries the full Phase F shape:
 
@@ -30,24 +32,24 @@ Every author carries the full Phase F shape:
 ## How `blog-write` / `blog-rewrite` use it
 
 `scripts/load_brand_context.py --list-authors --brand <slug>` lists the
-available authors for a brand. `scripts/submit_draft_firestore.py
---author <slug>` looks up the canonical name + byline at submission
-time.
+available authors for a brand (via the API). `scripts/submit_draft.py
+--author <slug>` sends the slug; the server joins the canonical name +
+byline from the author doc at submission time.
 
-The drafting prompt is assembled from the Firestore fields directly —
+The drafting prompt is assembled from the API-served fields directly —
 no fenced untrusted-data wrapper from disk anymore. The structured
 fields are injected as a small directive block; `writing_style` is
 appended as the freeform overflow.
 
 ## Adding a new author
 
-Open the Blog Manager in the consumer app → pick the brand → "+ New
-Author" → fill in the form. Save. The author shows up in
+Open Axiom → Instances → (instance) → Brands → (brand) → Authors →
+"+ New Author" → fill in the form. Save. The author shows up in
 `--list-authors` immediately and is selectable by `--author <slug>` on
 the next `/blog write` invocation.
 
 ## What happened to the `adam/` directory?
 
-It was deleted in Phase F-post once the data was confirmed present in
-qant-blog-drafts under the `adam-burgess` slug for every brand Adam
+It was deleted in Phase F-post once the data was confirmed present
+under the `adam-burgess` author slug for every brand Adam
 contributes to.

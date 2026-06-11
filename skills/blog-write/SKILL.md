@@ -36,11 +36,11 @@ parent `blog/SKILL.md` "Per-brand and per-author flags" section:
 
 | Flag | Effect on workflow |
 |------|--------------------|
-| `--brand <slug>` (optional) | Phase 0.5 resolves brand context (env + `.brand-seo.yml` `content:` block + author list); brand identity is injected into the drafting prompt; Phase 7.5 writes the draft to the shared `qant-blog-drafts` Firestore (one project for all brands; auth via two `QANT_BLOG_DRAFTS_*` env vars). **If omitted, Phase 0.5 prompts the user with a brand picker.** |
-| `--author <slug>` (optional) | Phase 0.6 reads the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed in Axiom: Instance Config → Brands → Authors); Phase 0.6 fetches the full doc with `--get-author`. The Firestore doc carries `name`, `byline`, `bio`, `writing_style`, plus structured-voice fields (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. **If omitted, Phase 0.6 prompts the user with the author list from `--list-authors --brand <slug>`, highlighting `content.default_author`.** |
+| `--brand <slug>` (optional) | Phase 0.5 resolves brand context (env + `.brand-seo.yml` `content:` block + author list); brand identity is injected into the drafting prompt; Phase 7.5 submits the draft to the brand's instance via the QANT brand-blog API (`POST /brand/blog/articles`, auth via the brand's own `brk_` key from the brand dir's env file). **If omitted, Phase 0.5 prompts the user with a brand picker.** |
+| `--author <slug>` (optional) | Phase 0.6 reads the author via the brand-blog API (`GET /brand/blog/authors/{slug}`, managed in Axiom: Instances → Brands → Authors); Phase 0.6 fetches the full doc with `--get-author`. The author doc carries `name`, `byline`, `bio`, `writing_style`, plus structured-voice fields (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. **If omitted, Phase 0.6 prompts the user with the author list from `--list-authors --brand <slug>`, highlighting `content.default_author`.** |
 | `--no-submit` | Skips Phase 7.5 entirely (article ends up local-only). |
 
-Note: there is no `--staging` / `--development` flag anymore. Drafts always go to the single `qant-blog-drafts` Firestore project regardless of which env the contributor's brand site happens to be wired to. The loader reads `.env`, `.env.stg`, `.env.dev` in precedence order — first existing file wins — to pick up `NEXT_PUBLIC_BRAND_DOMAIN`.
+Note: there is no `--staging` / `--development` flag anymore. Drafts always go to the brand's instance via the brand-key API regardless of which env the contributor's brand site happens to be wired to. The loader reads `.env`, `.env.stg`, `.env.dev` in precedence order — first existing file wins — to pick up `NEXT_PUBLIC_BRAND_DOMAIN`, `NEXT_PUBLIC_BRAND_KEY` (the `brk_` key), and `NEXT_PUBLIC_BRAND_ENV` (stg/dev → `https://api-stg.qant.au`, otherwise `https://api.qant.au`; `QANT_BLOG_API_URL` overrides — resolution lives in `scripts/qant_api.py`).
 
 ## Workflow
 
@@ -118,8 +118,9 @@ error.
 ### Phase 0.6: Author resolution (interactive picker when `--author` omitted)
 
 The on-disk `brands/<slug>/authors/` bundles were retired in Phase F-post.
-Authors live in `qant-blog-drafts.brands/{brand_slug}/authors/{slug}`,
-managed in Axiom (Instance Config → Brands → Authors). Every author has
+Authors live in the brand's instance Firestore
+(`instances/{id}/brands/{slug}/authors`), reached only via the brand-blog
+API and managed in Axiom (Instances → Brands → Authors). Every author has
 a full Phase F shape: `name`, `byline`, `bio`, `writing_style`,
 `target_audience`, plus structured-voice fields (`locale`,
 `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`).
@@ -130,17 +131,17 @@ a full Phase F shape: `name`, `byline`, `bio`, `writing_style`,
 python3 scripts/load_brand_context.py --list-authors --brand <slug>
 ```
 
-Returns `[{slug, name, byline}, ...]`. Requires
-`QANT_BLOG_DRAFTS_PROJECT_ID` + `QANT_BLOG_DRAFTS_WRITER_KEY` env vars
-to be set (the same pair the draft-submitter uses).
+Returns `[{slug, name, byline}, ...]` via `GET /brand/blog/authors`.
+Auth is the brand's `NEXT_PUBLIC_BRAND_KEY` read from the brand dir's
+env file (the same key the draft-submitter uses) — no env vars to set.
 
 **2. Resolve the author slug.**
 
 - If `--author <slug>` was passed → confirm the slug is in the
   `--list-authors` output. If it isn't, stop and tell the operator:
-  "Author `<slug>` doesn't exist in qant-blog-drafts under brand
-  `<brand_slug>`. Create it in Axiom (Instance Config → Brands →
-  <brand> → Authors → New Author) before re-running."
+  "Author `<slug>` doesn't exist for brand `<brand_slug>`. Create it
+  in Axiom (Instances → Brands → <brand> → Authors → New Author)
+  before re-running."
 
 - If `--author` was omitted → prompt the user. Build the list as:
 
@@ -155,12 +156,12 @@ to be set (the same pair the draft-submitter uses).
   (or, for legacy v1 schemas, `brand_identity.primary_author`). Empty
   stdin = take the default. Accept either the number or the slug.
 
-  If the brand has zero authors in qant-blog-drafts, stop with the
-  Axiom instruction above.
+  If the brand has zero authors, stop with the Axiom instruction
+  above.
 
 **3. Load the author doc fields.**
 
-Fetch the full author doc from qant-blog-drafts with:
+Fetch the full author doc from the API with:
 
 ```bash
 python3 scripts/load_brand_context.py --get-author <author_slug> --brand <slug>
@@ -169,8 +170,8 @@ python3 scripts/load_brand_context.py --get-author <author_slug> --brand <slug>
 The JSON on stdout is the ONLY author surface for this run. **Never
 read `author-profile-*.json`, exported author JSON, or any other
 on-disk author file**: exports are point-in-time snapshots that go
-stale the moment the profile is edited in Axiom (Instance Config →
-Brands → Authors); the Firestore doc is the live record. The fields:
+stale the moment the profile is edited in Axiom (Instances → Brands →
+Authors); the API-served author doc is the live record. The fields:
 
 - `name` → article frontmatter `author:` + per-draft `author.name`.
 - `byline` → `authorByline` frontmatter.
@@ -194,9 +195,9 @@ fields + writing_style take precedence on tone, sentence cadence, and
 banned-phrase list — VOICE.md is the project default; the author doc
 is the named author's voice.
 
-Phase 7.5 only passes `--author <slug>` to `submit_draft_firestore.py` —
-the script re-reads the canonical name/byline from Firestore so the
-join key + UI label always match the live author doc.
+Phase 7.5 only passes `--author <slug>` to `submit_draft.py` — the
+server joins the canonical name/byline from the author doc so the
+join key + UI label always match the live record.
 
 ### Phase 1: Topic Understanding
 
@@ -386,15 +387,15 @@ If the platform uses a different field name (e.g., `image`, `hero`, `thumbnail`)
 adapt to match the project's existing frontmatter convention.
 
 When an author is resolved (Phase 0.6): derive the `author:` value from
-the author doc's `name` field (canonical source — read from
-`qant-blog-drafts.brands/{brand_slug}/authors/{slug}`). Append the
+the author doc's `name` field (canonical source — fetched via
+`GET /brand/blog/authors/{slug}`). Append the
 `byline` field as a secondary frontmatter entry (`authorByline`) for
 downstream renderers.
 
 The article frontmatter is the only place the FULL author bio appears
-in the local-delivery output. The submission payload's `author` field
-(Phase 7.5) is just `{slug, name}` — bio + byline live once on the
-per-author Firestore doc.
+in the local-delivery output. The submission payload (Phase 7.5)
+carries no author fields at all — the script sends `author_slug` and
+the server joins name/byline/bio from the per-author doc.
 
 #### 5b. Summary Box (Key Takeaways)
 
@@ -673,7 +674,7 @@ Steps:
    - No text artifacts or garbled lettering anywhere in the frame.
    - No AI-slop tells: extra limbs/fingers, melted or fused objects, uncanny faces, impossible geometry.
    - Palette and tone fit the brand identity resolved in Phase 0.5.
-   - Reads clearly at thumbnail size (the Blog Manager sidebar shows it ~270px wide).
+   - Reads clearly at thumbnail size (the Axiom review sidebar shows it ~270px wide).
 
    On failure: regenerate with a corrected prompt that names the specific defect ("no text overlays", "hands out of frame", …). **Maximum 2 regeneration retries.** After 2 failures, fall back to the stock-photo ladder and review that result against the same checklist. If stock also fails, proceed WITHOUT a hero and note it in the Phase 7 summary — never block the article on the image.
 
@@ -700,9 +701,10 @@ Phase 7.5).
 After Phase 6.5 returns all gates passing AND a brand context was resolved
 in Phase 0.5, ship the draft to the brand's instance.
 
-1. **Build the payload** from article state. Shape (E4.5 — `author` is
-   `{slug, name}` only; `byline` + `bio` live on the per-author
-   Firestore doc and must NOT be embedded per-draft):
+1. **Build the payload** from article state. Shape (the payload must
+   NOT include `author`, `brand_slug`, or `contentType` — the server
+   joins the author's canonical name from the author doc and the brand
+   comes from the key):
 
    ```json
    {
@@ -710,10 +712,6 @@ in Phase 0.5, ship the draft to the brand's instance.
      "slug": "<frontmatter slug or derived from title>",
      "category": "<from frontmatter — MUST be one of brand_identity.content.categories>",
      "target_keyword": "<primary keyword>",
-     "author": {
-       "slug": "<resolved author slug>",
-       "name": "<read from qant-blog-drafts.brands/{brand_slug}/authors/{slug}.name>"
-     },
      "hero_image_url": "<frontmatter coverImage / ogImage>",
      "og": { "title": "...", "description": "...", "image": "..." },
      "body_markdown": "<the rendered .md, frontmatter stripped>",
@@ -722,16 +720,14 @@ in Phase 0.5, ship the draft to the brand's instance.
    }
    ```
 
-   `submit_draft_firestore.py` will:
-   - Verify the author exists in
-     `qant-blog-drafts.brands/{brand_slug}/authors/{author_slug}` — fail
-     fast with a clear "create the author in Axiom first"
-     message if it doesn't.
-   - Drop any leaked `author.bio` / `author.byline` from the payload
-     (with a stderr warning) and stamp the canonical `slug` / `name`
-     read from the Firestore author doc.
-   - Add producer-side telemetry (`brand_slug`, `contentType`,
-     `submittedBy`, `submittedAt`, `keyId`) at write time.
+   `submit_draft.py` will:
+   - Strip any leaked `author` / `brand_slug` / `contentType` keys from
+     the payload and send `author_slug` instead.
+   - Fail fast with a clear "create the author in Axiom first" message
+     when the server rejects an unknown author slug.
+   - The server stamps submission telemetry and creates the article
+     with `status='draft'` in the brand's instance Firestore
+     (`instances/{id}/brands/{slug}/blog_posts`).
 
    Write the payload JSON to `<draft-folder>/submission.json`.
 
@@ -741,17 +737,18 @@ in Phase 0.5, ship the draft to the brand's instance.
    - Otherwise → submit. The contributor invoked the skill, they want
      the draft saved. No env-flag-dependent prompt.
 
-3. **Submit** — writes to the shared `qant-blog-drafts` Firestore project
-   via the writer service-account key (separate Firebase project from any
-   instance — credential blast radius is "blog drafts only"; see
-   `~/.claude/plans/please-review-the-work-harmonic-cosmos.md` § E3 for
-   the rationale). Auth is via two env vars set in the contributor's shell:
-
-   - `QANT_BLOG_DRAFTS_PROJECT_ID` — e.g. `qant-blog-drafts`
-   - `QANT_BLOG_DRAFTS_WRITER_KEY` — absolute path to writer SA JSON
+3. **Submit** — POSTs to the QANT brand-blog API
+   (`POST /brand/blog/articles`, `X-Brand-Key` header). Auth is the
+   brand's own key: `NEXT_PUBLIC_BRAND_KEY` (a `brk_` key) read from
+   `/Users/adam/Projects/qant/brands/<slug>/.env` → `.env.stg` →
+   `.env.dev` (first existing file wins). The API base derives from
+   `NEXT_PUBLIC_BRAND_ENV` (stg/dev → `https://api-stg.qant.au`,
+   otherwise `https://api.qant.au`); the `QANT_BLOG_API_URL` env var
+   overrides it. Resolution lives in `scripts/qant_api.py` — no
+   service-account keys, no env-var setup in the contributor's shell.
 
    ```bash
-   python3 scripts/submit_draft_firestore.py \\
+   python3 scripts/submit_draft.py \\
        --brand-slug "<brand_slug from Phase 0.5>" \\
        --author "<author_slug from Phase 0.6>" \\
        --payload "<draft-folder>/submission.json"
@@ -761,19 +758,19 @@ in Phase 0.5, ship the draft to the brand's instance.
 
    ```json
    {
-     "author_path": "brands/<slug>/authors/<author_slug>",
+     "author_slug": "<author_slug>",
      "draft_id":    "<auto-id>",
-     "draft_path":  "brands/<slug>/drafts/<auto-id>"
+     "draft_path":  "<server-reported article path>"
    }
    ```
 
-   Report `draft_path` to the user ("draft written. Visible in the
-   consumer-app Blog Manager → Drafts; inspect in the Firebase console
-   for project `qant-blog-drafts` if needed").
+   Report `draft_path` to the user ("draft written with
+   `status='draft'`. Visible in Axiom: Instances → (instance) →
+   Brands → (brand) → Articles").
 
-   The legacy HTTP-based `scripts/submit_draft.py` path was removed
-   in Phase F-post — all QANT drafts now go through
-   `submit_draft_firestore.py`. See the canonical spec for context.
+   The legacy direct-Firestore `scripts/submit_draft_firestore.py`
+   path was retired in the brand-key API migration — all QANT drafts
+   now go through `submit_draft.py`.
 
 4. **On failure**: surface the script's stderr verbatim, write the
    payload to `<draft-folder>/submission.json` (so the user can retry
@@ -781,23 +778,24 @@ in Phase 0.5, ship the draft to the brand's instance.
    article is still complete locally; submission can be retried with:
 
    ```bash
-   python3 scripts/submit_draft_firestore.py \\
+   python3 scripts/submit_draft.py \\
        --brand-slug <slug> \\
        --author <author_slug> \\
        --payload <draft-folder>/submission.json
    ```
 
-   Common failure modes: missing env vars (exit 2); SA key file missing
-   (exit 2); author slug not found in qant-blog-drafts (exit 2 — the
-   error tells the operator to create the author via the Blog Manager
-   UI first); IAM denied (exit 1 with the google-cloud-firestore
-   error); network unreachable (exit 1).
+   Common failure modes: no brand env file or no `NEXT_PUBLIC_BRAND_KEY`
+   in it (exit 2); author slug not found (exit 2 — the error tells the
+   operator to create the author in Axiom: Instances → Brands →
+   Authors first); API auth rejected / other API failure (exit 1 with
+   the API's error detail); network unreachable (exit 1).
 
 ### Phase 7.6: Hero image attach (only after a successful Phase 7.5)
 
-Ship the Phase 6.5 reviewed hero alongside the draft so the Blog Manager
-shows it in the review sidebar. Uses the `draft_id` returned by
-`submit_draft_firestore.py`:
+Ship the Phase 6.5 reviewed hero alongside the draft so Axiom shows it
+in the article review sidebar. Uses the `draft_id` returned by
+`submit_draft.py` (the script POSTs to
+`/brand/blog/articles/{id}/image` with the brand key):
 
 ```bash
 python3 scripts/attach_draft_image.py \\
@@ -814,14 +812,14 @@ python3 scripts/attach_draft_image.py \\
   the gate; a third failure means something is wrong with the source
   image — fall through to the failure handling below.
 - **No hero exists** (Phase 6.5 proceeded imageless): skip this phase
-  silently; the Blog Manager shows "No image attached".
+  silently; Axiom shows "No image attached".
 - **On any other failure**: warn and continue — the draft is already
   submitted and stands on its own. The operator can flag an image-only
-  rewrite from the Blog Manager to attach one later. NEVER fail the
+  rewrite from Axiom to attach one later. NEVER fail the
   submission over the image.
 
 On success, include `images/hero` in the Phase 7 summary's draft_path
-line (e.g. `brands/<slug>/drafts/<id> (+ images/hero)`).
+line (e.g. `<draft_path> (+ images/hero)`).
 
 ### Phase 7: Delivery
 

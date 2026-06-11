@@ -1,127 +1,58 @@
 #!/usr/bin/env python3
-"""Delete a draft from the qant-blog-drafts inbox.
+"""Delete a draft article via the QANT brand-blog API.
 
-Used by ``/blog rewrite --from-queue`` after the rewritten draft has been
-successfully submitted (Phase 5.6) — the original flagged doc is now
-superseded and has no reason to exist. Replaces the older
-``clear_review_state.py`` step in the queue-drain flow; the cleared-flag
-approach left both pre- and post-rewrite copies in the inbox, which the
-operator saw as duplicates in the Blog Manager UI.
+Used by ``/blog rewrite`` to remove the original after a rewritten
+replacement commits (the server cascades the images subcollection).
+Idempotent: a missing article reports success so retried queue drains
+don't fail on already-cleaned originals.
 
-This script unconditionally deletes the doc. The orchestrator is
-responsible for ordering the call AFTER a confirmed submit so that a
-submit failure cannot strand the original.
+Usage:
+    python3 delete_inbox_draft.py --brand-slug redbridgecyber \
+        --draft-id <id> [--reason "superseded by rewrite <new-id>"]
 
-The draft's ``images`` subcollection is swept first — Firestore does not
-cascade subcollection deletes, so skipping this would orphan the hero
-image doc. The sweep also runs when the draft doc is already absent
-(heals orphans left by earlier deletes that predate this behaviour).
-
-Environment
------------
-* ``QANT_BLOG_DRAFTS_PROJECT_ID``
-* ``QANT_BLOG_DRAFTS_WRITER_KEY``
-
-Both required; exits 2 if missing.
-
-Usage
------
-    python3 delete_inbox_draft.py \\
-        --brand-slug redbridgecyber \\
-        --draft-id  Y14iwD70ljgFIEW5Mihi \\
-        --reason    "superseded by rewrite via /blog rewrite --from-queue"
-
-The ``--reason`` flag is optional and is purely audit-side: it's printed
-to stdout alongside the success line so it lands in the orchestrator's
-log. Firestore receives only the delete; no tombstone is written.
-
-Exit codes
-----------
-* 0 — doc deleted, or already absent (idempotent).
-* 1 — Firestore error (network / permissions / unexpected).
-* 2 — env vars missing or SA key path unreadable.
+Exit codes: 0 ok (deleted or already gone) · 1 API failure · 2 bad input.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
+import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import qant_api  # noqa: E402
 
 
-def delete_draft(client, brand_slug: str, draft_id: str) -> str:
-    """Sweep images subcollection, then delete the draft doc.
-
-    Returns ``"deleted"`` or ``"already_absent"`` (idempotent — the
-    orchestrator may call this twice after a partial retry). The images
-    sweep runs in both cases because subcollections survive parent
-    deletion in Firestore.
-    """
-    ref = (
-        client.collection("brands")
-        .document(brand_slug)
-        .collection("drafts")
-        .document(draft_id)
+def delete_draft(request_fn, brand_slug: str, draft_id: str) -> dict:
+    """DELETE the article (404 tolerated). Returns {"deleted": True, ...}."""
+    request_fn(
+        brand_slug, "DELETE", f"/brand/blog/articles/{draft_id}",
+        None, none_on_404=True,
     )
-    for image_snap in ref.collection("images").stream():
-        image_snap.reference.delete()
-
-    snap = ref.get()
-    if not snap.exists:
-        return "already_absent"
-    ref.delete()
-    return "deleted"
-
-
-def _env() -> tuple[str, str]:
-    project = os.environ.get("QANT_BLOG_DRAFTS_PROJECT_ID")
-    key_path = os.environ.get("QANT_BLOG_DRAFTS_WRITER_KEY")
-    if not project:
-        sys.stderr.write("error: QANT_BLOG_DRAFTS_PROJECT_ID is not set.\n")
-        sys.exit(2)
-    if not key_path:
-        sys.stderr.write("error: QANT_BLOG_DRAFTS_WRITER_KEY is not set.\n")
-        sys.exit(2)
-    if not os.path.exists(key_path):
-        sys.stderr.write(f"error: SA key file not found at {key_path}.\n")
-        sys.exit(2)
-    return project, key_path
+    return {"deleted": True, "draft_id": draft_id}
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    ap.add_argument("--brand-slug", required=True)
-    ap.add_argument("--draft-id", required=True)
-    ap.add_argument(
-        "--reason",
-        default=None,
-        help="Optional audit note printed alongside the success line.",
-    )
-    args = ap.parse_args()
-
-    project, key_path = _env()
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--brand-slug", required=True)
+    parser.add_argument("--draft-id", required=True)
+    parser.add_argument("--reason", default="",
+                        help="Audit note for the operator log line (not persisted server-side).")
+    args = parser.parse_args()
 
     try:
-        from google.cloud import firestore  # type: ignore
-        from google.oauth2 import service_account  # type: ignore
-    except ImportError as exc:
-        sys.stderr.write(
-            f"error: required Python package missing ({exc}). "
-            "Install with `pip install google-cloud-firestore`.\n"
-        )
+        result = delete_draft(qant_api.request, args.brand_slug, args.draft_id)
+    except qant_api.ApiError as e:
+        print(f"Error: API delete failed: {e}", file=sys.stderr)
+        return 1
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 2
 
-    creds = service_account.Credentials.from_service_account_file(key_path)
-    client = firestore.Client(project=project, credentials=creds)
-
-    try:
-        result = delete_draft(client, args.brand_slug, args.draft_id)
-    except Exception as exc:  # pylint: disable=broad-except
-        sys.stderr.write(f"error: Firestore delete failed: {exc}\n")
-        return 1
-
-    suffix = f" reason={args.reason!r}" if (args.reason and result == "deleted") else ""
-    print(f"{result} brands/{args.brand_slug}/drafts/{args.draft_id}{suffix}")
+    if args.reason:
+        result["reason"] = args.reason
+    print(json.dumps(result))
     return 0
 
 

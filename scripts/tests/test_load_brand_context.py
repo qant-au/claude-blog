@@ -257,29 +257,11 @@ def test_get_author_returns_the_full_firestore_doc():
         "brand_slug":      "redbridgecyber",
     }
 
-    class _Snap:
-        exists = True
-        id = "adam-burgess"
+    def _request(brand, method, path, body=None, **kw):
+        assert method == "GET" and path == "/brand/blog/authors/adam-burgess"
+        return dict(doc, slug="adam-burgess")
 
-        @staticmethod
-        def to_dict():
-            return dict(doc)
-
-    class _Ref:
-        def get(self):
-            return _Snap()
-
-    class _Chain:
-        def collection(self, _name):
-            return self
-
-        def document(self, _name):
-            return self
-
-        def get(self):
-            return _Snap()
-
-    out = mod.get_author_from_drafts("redbridgecyber", "adam-burgess", _client=_Chain())
+    out = mod.get_author_from_drafts("redbridgecyber", "adam-burgess", _request=_request)
     assert out["slug"] == "adam-burgess"
     for field in (
         "name", "byline", "bio", "target_audience", "locale",
@@ -294,25 +276,14 @@ def test_get_author_missing_points_at_axiom():
     not silently fall back to disk files."""
     mod = _import_helper()
 
-    class _Snap:
-        exists = False
+    class _NotFound(RuntimeError):
+        status = 404
 
-        @staticmethod
-        def to_dict():
-            return {}
-
-    class _Chain:
-        def collection(self, _name):
-            return self
-
-        def document(self, _name):
-            return self
-
-        def get(self):
-            return _Snap()
+    def _request(brand, method, path, body=None, **kw):
+        raise _NotFound("404")
 
     with pytest.raises(LookupError) as exc:
-        mod.get_author_from_drafts("redbridgecyber", "ghost", _client=_Chain())
+        mod.get_author_from_drafts("redbridgecyber", "ghost", _request=_request)
     assert "Axiom" in str(exc.value)
     assert "ghost" in str(exc.value)
 
@@ -328,10 +299,11 @@ def test_cli_get_author_without_env_exits_2(tmp_path: Path):
         [sys.executable, str(HELPER), "--get-author", "adam-burgess",
          "--brand", "redbridgecyber", "--brands-root", str(tmp_path)],
         capture_output=True, text=True,
-        env={"PATH": "/usr/bin:/bin"},  # no QANT_BLOG_DRAFTS_* vars
+        env={"PATH": "/usr/bin:/bin"},
     )
     assert proc.returncode == 2
-    assert "QANT_BLOG_DRAFTS" in proc.stderr
+    # Brand dir is missing under tmp_path — the loader points at the brand env.
+    assert "brand" in proc.stderr.lower()
 
 
 def test_cli_does_not_leak_env_secrets(tmp_path: Path):

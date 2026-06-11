@@ -79,21 +79,25 @@ to the sub-skill as part of command routing:
 | Flag | Default | Effect |
 |------|---------|--------|
 | `--brand <slug>` | **prompt** | Resolves `/Users/adam/Projects/qant/brands/<slug>/` via `scripts/load_brand_context.py`. Injects brand identity (display_name, canonical, content scope) into the drafting prompt alongside `BRAND.md` / `VOICE.md`. **When omitted, Phase 0.5 enumerates `--list-brands` and prompts.** |
-| `--author <slug>` | **prompt with brand-level `content.default_author` highlighted** | Resolves the author slug via `scripts/load_brand_context.py --list-authors --brand <slug>`, then fetches the FULL doc with `--get-author <slug> --brand <slug>`: the only author surface; never read `author-profile-*.json` exports. The Firestore doc carries every field: `name`, `byline`, `bio`, `writing_style`, plus the structured-voice columns (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post; create / edit / delete authors in Axiom (Instance Config → Brands → Authors). |
+| `--author <slug>` | **prompt with brand-level `content.default_author` highlighted** | Resolves the author slug via `scripts/load_brand_context.py --list-authors --brand <slug>`, then fetches the FULL doc with `--get-author <slug> --brand <slug>` (both call the brand-blog API): the only author surface; never read `author-profile-*.json` exports. The author doc carries every field: `name`, `byline`, `bio`, `writing_style`, plus the structured-voice columns (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post; create / edit / delete authors in Axiom (Instances → Brands → Authors). |
 | `--no-submit` | unset | Skips the draft-submission phase entirely. Article ends up as a local markdown file only. |
-| `--from-queue` (rewrite only, v1.9.2) | unset | Queue mode for `/blog rewrite`. Reads every draft in `qant-blog-drafts.brands/{brand_slug}/drafts/` flagged with `review_state == "needs_rewrite"` and rewrites each in sequence, clearing the flag on success. With `--brand <slug>`, scoped to that brand; with `--all-brands` (or no `--brand`), enumerates every brand. Skips the positional `<file-path>` argument. See `skills/blog-rewrite/SKILL.md` Phase 0.3. |
+| `--from-queue` (rewrite only, v1.9.2) | unset | Queue mode for `/blog rewrite`. Reads every article flagged with `review_state == "needs_rewrite"` (via `GET /brand/blog/rewrites` with each brand's key) and rewrites each in sequence, clearing the flag on success. With `--brand <slug>`, scoped to that brand; with `--all-brands` (or no `--brand`), enumerates every brand. Skips the positional `<file-path>` argument. See `skills/blog-rewrite/SKILL.md` Phase 0.3. |
 | `--all-brands` (rewrite only, v1.10) | unset | Multi-brand queue mode. Implies `--from-queue`. **`/blog rewrite` with no arguments defaults to this** — the orchestrator passes `--from-queue --all-brands` straight through to `blog-rewrite` without prompting for brand or file path. |
 
-There is no `--staging` / `--development` flag. The new submission path
-writes every draft to the single `qant-blog-drafts` Firestore project
+There is no `--staging` / `--development` flag. The submission path
+sends every draft to the brand's instance via the QANT brand-blog API
 regardless of environment. The brand-context loader reads `.env` →
 `.env.stg` → `.env.dev` in precedence order (first existing file wins)
-to pick up `NEXT_PUBLIC_BRAND_DOMAIN`.
+to pick up `NEXT_PUBLIC_BRAND_DOMAIN`, `NEXT_PUBLIC_BRAND_KEY`, and
+`NEXT_PUBLIC_BRAND_ENV`.
 
-Submission auth is via two env vars set on the contributor's machine:
-
-- `QANT_BLOG_DRAFTS_PROJECT_ID` (e.g. `qant-blog-drafts`)
-- `QANT_BLOG_DRAFTS_WRITER_KEY` (absolute path to writer SA JSON)
+Submission auth is the brand's own key: `NEXT_PUBLIC_BRAND_KEY` (a
+`brk_` key) from the brand dir's env file, sent as the `X-Brand-Key`
+header. The API base derives from `NEXT_PUBLIC_BRAND_ENV` (stg/dev →
+`https://api-stg.qant.au`, otherwise `https://api.qant.au`); the
+`QANT_BLOG_API_URL` env var overrides it. Resolution is implemented in
+`scripts/qant_api.py` — no service-account keys, no
+`QANT_BLOG_DRAFTS_*` env vars.
 
 Resolution order for `--brand`:
 1. Explicit `--brand <slug>` argument.
@@ -103,9 +107,9 @@ Resolution order for `--brand`:
 
 Resolution order for `--author`:
 1. Explicit `--author <slug>` argument. The skill verifies the slug
-   exists in `qant-blog-drafts.brands/{brand_slug}/authors/` before
+   exists in the brand's author list (`GET /brand/blog/authors`) before
    continuing; if it doesn't, the skill stops and asks the operator to
-   create the author in Axiom (Instance Config → Brands → Authors) first.
+   create the author in Axiom (Instances → Brands → Authors) first.
 2. Otherwise prompt the user with the list returned by
    `scripts/load_brand_context.py --list-authors --brand <slug>`,
    defaulting to `brand_identity.content.default_author` (or legacy
@@ -501,16 +505,17 @@ If `BRAND.md` and / or `VOICE.md` exist at the project root, load their fenced c
 
 When both are present, BRAND.md takes precedence on positioning, audience, taboo phrases, and topic scope; VOICE.md takes precedence on tone, sentence ceiling, and pronoun stance. The structured `blog-persona` JSON remains the canonical source for programmatic enforcement (tone sliders, readability bands); VOICE.md is the human-readable mirror for cross-skill prompts.
 
-### Author scope (Phase F-post — Firestore-managed)
+### Author scope (Phase F-post — API-managed)
 
 When `--author <slug>` is set on `blog-write` or `blog-rewrite`, the author
-record is read live from
-`qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed via the Blog
-Manager UI in the consumer app). The Firestore doc carries every field:
+record is read live via the brand-blog API
+(`GET /brand/blog/authors/{slug}`; data lives in the brand's instance
+Firestore at `instances/{id}/brands/{slug}/authors`, managed in Axiom:
+Instances → Brands → Authors). The author doc carries every field:
 
 | Field | Role |
 |------|------|
-| `name` | Display name. Stamped onto the article frontmatter `author:` value and the draft submission payload's `author.name`. |
+| `name` | Display name. Stamped onto the article frontmatter `author:` value; the server joins it onto submitted drafts from the author doc (the submission payload carries only `author_slug`). |
 | `byline` | One-line role descriptor. Surfaced under the author name on every article + as `authorByline` in social previews. |
 | `bio` | Author bio markdown. Rendered into the article foot. |
 | `writing_style` | Freeform voice guide. Loaded into the drafting prompt as the per-author voice block — takes precedence over `VOICE.md` when both are present. |
@@ -520,8 +525,8 @@ Manager UI in the consumer app). The Firestore doc carries every field:
 | `signature_moves` | Phrases / patterns the author favours. Soft bias in the writer-agent prompt. |
 
 The on-disk `skills/blog/authors/<slug>/` bundles were retired in
-Phase F-post; create / edit / delete authors in Axiom (Instance
-Config → Brands → Authors). See `skills/blog/authors/README.md` for
+Phase F-post; create / edit / delete authors in Axiom (Instances →
+Brands → Authors). See `skills/blog/authors/README.md` for
 the retirement notice.
 
 ### DISCOURSE.md scope

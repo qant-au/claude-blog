@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### QANT integration — final shape (post-Phase F-post)
+### Brand-key API migration (2026-06-11, v2.0)
+
+Every data call now goes over the QANT brand-blog API
+(`/brand/blog/*`, `X-Brand-Key` from `brands/<slug>/.env*` —
+resolution in `scripts/qant_api.py`). The separate `qant-blog-drafts`
+Firestore project, its writer service-account key, and the
+`QANT_BLOG_DRAFTS_*` env vars are retired; storage is the instance
+Firestore attached to the brand. Operator review moved from the
+consumer-app Blog Manager to Axiom (Instances → Brands → Articles).
+
+- `submit_draft_firestore.py` → `submit_draft.py` (same CLI; payload
+  carries `author_slug` only — the server joins the canonical name).
+- `attach_draft_image.py` / `copy_draft_image.py` /
+  `delete_inbox_draft.py` / `clear_review_state.py` /
+  `list_pending_rewrites.py` keep their CLIs but speak HTTP.
+- `load_brand_context.py --list-authors/--get-author` read the API.
+- Removed: `smoke-author-dual-write.sh`, `smoke-image-roundtrip.sh`
+  (tested the retired dual-Firestore round trip).
+
+### QANT integration — final shape (post-Phase F-post, superseded above)
 
 The QANT integration evolved across several phases (E → E4.5 → F → F-post)
 that experimented with on-disk author bundles, brand-key auth, and a

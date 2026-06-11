@@ -3,7 +3,7 @@ name: blog-write-adam
 description: >
   Thin alias for `/blog write` with `--author adam-burgess` injected.
   Routes to the blog-write sub-skill with Adam Burgess's author record
-  loaded from qant-blog-drafts. Use when the user says "write as Adam",
+  loaded via the QANT brand-blog API. Use when the user says "write as Adam",
   "/blog-write-adam <topic>", or any equivalent shortcut for
   Adam-authored content.
 user-invokable: true
@@ -29,19 +29,19 @@ When invoked:
 
 ## Effect
 
-* Phase 0.6 (author resolution) reads
-  `qant-blog-drafts.brands/{brand_slug}/authors/adam-burgess` —
-  the on-disk `brands/<slug>/authors/<slug>/` bundles were retired in
-  Phase F-post. If the author doc doesn't exist under the brand the
-  user picked, the skill stops and asks the operator to create it in
-  Axiom (Instance Config → Brands → Authors) first.
-* Phase 5a (frontmatter) sets `author:` from the Firestore doc's
+* Phase 0.6 (author resolution) reads the `adam-burgess` author doc
+  via the brand-blog API (`GET /brand/blog/authors/adam-burgess` with
+  the brand's key) — the on-disk `brands/<slug>/authors/<slug>/`
+  bundles were retired in Phase F-post. If the author doc doesn't
+  exist under the brand the user picked, the skill stops and asks the
+  operator to create it in Axiom (Instances → Brands → Authors) first.
+* Phase 5a (frontmatter) sets `author:` from the author doc's
   `name` field and `authorByline:` from its `byline` field.
-* Phase 7 renders the bio block from the Firestore `bio` field into
-  the local article foot. Phase 7.5 writes the draft to
-  `qant-blog-drafts.brands/{brand_slug}/drafts/{auto_id}` with
-  `author: {slug, name}` only in the per-draft doc — bio + byline +
-  voice fields live once on `brands/{brand_slug}/authors/adam-burgess`.
+* Phase 7 renders the bio block from the author doc's `bio` field into
+  the local article foot. Phase 7.5 submits the draft via
+  `POST /brand/blog/articles` (status `draft`) with only `author_slug`
+  in the payload — name is joined server-side, and bio + byline +
+  voice fields live once on the per-author doc.
 
 ## Pass-through arguments
 
@@ -75,10 +75,10 @@ Expands to:
 ```
 
 End-to-end: brand context loaded via the env-precedence pick (`.env` →
-`.env.stg` → `.env.dev`), Adam's author record read from
-`qant-blog-drafts.brands/redbridgecyber/authors/adam-burgess`,
-article drafted in Adam's voice (using the Firestore doc's
+`.env.stg` → `.env.dev`), Adam's author record read via the brand-blog
+API (`GET /brand/blog/authors/adam-burgess` with redbridgecyber's
+`brk_` key), article drafted in Adam's voice (using the author doc's
 `writing_style` + structured-voice fields), FLOW review run, draft
-written to `qant-blog-drafts.brands/redbridgecyber/drafts/{auto_id}`
-via `submit_draft_firestore.py` (env-based SA auth — no per-brand
-bearer key), Firestore paths reported back.
+submitted to redbridgecyber's instance via `submit_draft.py`
+(`POST /brand/blog/articles`, brand-key auth — no service-account
+keys), `draft_id` + `draft_path` reported back.

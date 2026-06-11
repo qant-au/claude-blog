@@ -3,10 +3,10 @@
 
 Used by ``/blog write`` / ``/blog rewrite`` to inject brand identity into
 the drafting prompt and to surface the brand-local author list for the
-author picker. Phase E4.5 removed the env-flag selector and dropped the
-HTTP-submission auth (brand_key / api_url) from the output — the new
-submit path writes directly to the qant-blog-drafts Firestore project
-via env-var-based SA auth, not via the per-brand bearer key.
+author picker. Since the 2026-06 brand-key migration every data call
+(authors, drafts, images, rewrite queue) goes over the QANT brand-blog
+API authenticated with the brand's own key — see scripts/qant_api.py for
+how the key + API base are resolved from the brand env file.
 
 Brand directories live at ``/Users/adam/Projects/qant/brands/<slug>/``.
 Each contains:
@@ -30,16 +30,16 @@ dependency.
 
 Authors
 ───────
-Authors live in the ``qant-blog-drafts`` Firestore project under
-``brands/{brand_slug}/authors/*`` (managed via the Blog Manager UI in the
-consumer app). The on-disk ``brands/<slug>/authors/`` bundles were
-retired in Phase F-post; the brand-context loader no longer enumerates
-them.
+Authors live in the instance Firestore attached to the brand and are
+managed in Axiom (Instances → Brands → Authors). The skill reads them
+over the brand-key API (``GET /brand/blog/authors``); the on-disk
+``brands/<slug>/authors/`` bundles were retired in Phase F-post.
 
-The ``--list-authors --brand <slug>`` mode hits qant-blog-drafts directly
-and emits ``[{slug, name, byline}, ...]`` for the skill's author picker.
-Requires ``QANT_BLOG_DRAFTS_PROJECT_ID`` + ``QANT_BLOG_DRAFTS_WRITER_KEY``
-to be set (same env vars the draft-submitter uses).
+The ``--list-authors --brand <slug>`` mode emits
+``[{slug, name, byline}, ...]`` for the skill's author picker;
+``--get-author <slug> --brand <slug>`` emits the full voice payload.
+Auth comes from ``NEXT_PUBLIC_BRAND_KEY`` in the brand env file — no
+service-account env vars are needed any more.
 
 Brand enumeration
 ─────────────────
@@ -321,60 +321,48 @@ def list_brands(brands_root: Path | None = None) -> list[dict[str, str]]:
     return out
 
 
-def _drafts_client():
-    """Build the qant-blog-drafts Firestore client from the env-var pair the
-    draft-submitter uses (``QANT_BLOG_DRAFTS_PROJECT_ID`` +
-    ``QANT_BLOG_DRAFTS_WRITER_KEY``)."""
-    project_id = os.environ.get("QANT_BLOG_DRAFTS_PROJECT_ID")
-    key_path   = os.environ.get("QANT_BLOG_DRAFTS_WRITER_KEY")
-    if not project_id or not key_path:
-        raise RuntimeError(
-            "QANT_BLOG_DRAFTS_PROJECT_ID and QANT_BLOG_DRAFTS_WRITER_KEY must "
-            "be set to read authors from qant-blog-drafts."
-        )
-    if not Path(key_path).is_file():
-        raise RuntimeError(
-            f"QANT_BLOG_DRAFTS_WRITER_KEY points at non-existent file: {key_path}"
-        )
-
-    try:
-        from google.cloud import firestore  # type: ignore[import-not-found]
-        from google.oauth2 import service_account  # type: ignore[import-not-found]
-    except ImportError as e:
-        raise RuntimeError(
-            f"google-cloud-firestore not installed ({e}). "
-            f"Install with: pip install google-cloud-firestore"
-        ) from None
-
-    creds = service_account.Credentials.from_service_account_file(key_path)
-    return firestore.Client(project=project_id, credentials=creds)
+def _api():
+    """Lazy import of the brand-key API client (scripts/qant_api.py)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "qant_api", Path(__file__).resolve().parent / "qant_api.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
 
 
-def list_authors_from_drafts(brand_slug: str) -> list[dict[str, str]]:
-    """Fetch ``brands/{brand_slug}/authors/*`` from qant-blog-drafts.
+def list_authors_from_drafts(brand_slug: str, _request=None, *, brands_root: Path | None = None) -> list[dict[str, str]]:
+    """Fetch the brand's authors over the brand-key API.
 
     Returns ``[{slug, name, byline}, ...]`` sorted by slug. Used by the
     skill's author picker when ``--author`` is omitted on ``/blog write``.
+
+    ``_request`` is a test seam; production callers omit it.
     """
-    client = _drafts_client()
-    col = client.collection("brands").document(brand_slug).collection("authors")
-    out: list[dict[str, str]] = []
-    for snap in col.stream():
-        d = snap.to_dict() or {}
-        out.append({
-            "slug":   snap.id,
-            "name":   d.get("name") or snap.id,
-            "byline": d.get("byline") or "",
-        })
+    request_fn = _request if _request is not None else _api().request
+    kw = {"brands_root": brands_root} if (_request is None and brands_root is not None) else {}
+    resp = request_fn(brand_slug, "GET", "/brand/blog/authors", None, **kw)
+    out = [
+        {
+            "slug":   a.get("slug") or "",
+            "name":   a.get("name") or a.get("slug") or "",
+            "byline": a.get("byline") or "",
+        }
+        for a in (resp or {}).get("items", [])
+    ]
     return sorted(out, key=lambda r: r["slug"])
 
 
 def get_author_from_drafts(
     brand_slug: str,
     author_slug: str,
-    _client=None,
+    _request=None,
+    *,
+    brands_root: Path | None = None,
 ) -> dict:
-    """Fetch ONE full author doc from qant-blog-drafts.
+    """Fetch ONE full author doc over the brand-key API.
 
     This is the /blog skill's single author surface: the returned dict
     carries the complete Axiom-managed voice payload (name, byline, bio,
@@ -383,22 +371,24 @@ def get_author_from_drafts(
     never on-disk author-profile-*.json exports, which go stale the moment
     the profile is edited in Axiom.
 
-    ``_client`` is a test seam; production callers omit it.
+    ``_request`` is a test seam; production callers omit it.
     """
-    client = _client if _client is not None else _drafts_client()
-    snap = (
-        client.collection("brands").document(brand_slug)
-              .collection("authors").document(author_slug)
-              .get()
-    )
-    if not getattr(snap, "exists", False):
-        raise LookupError(
-            f"author '{author_slug}' not found in "
-            f"qant-blog-drafts.brands/{brand_slug}/authors. Create or edit "
-            f"authors in Axiom (Instance Config → Brands → Authors)."
-        )
-    doc = snap.to_dict() or {}
-    doc["slug"] = author_slug
+    request_fn = _request if _request is not None else _api().request
+    kw = {"brands_root": brands_root} if (_request is None and brands_root is not None) else {}
+    try:
+        doc = request_fn(brand_slug, "GET", f"/brand/blog/authors/{author_slug}", None, **kw)
+    except RuntimeError as e:
+        # qant_api.ApiError subclasses RuntimeError; match on .status so the
+        # check survives separate module loads (the test harness imports
+        # scripts by path, which creates distinct class objects).
+        if getattr(e, "status", None) == 404:
+            raise LookupError(
+                f"author '{author_slug}' not found for brand '{brand_slug}'. "
+                f"Create or edit authors in Axiom (Instances → Brands → Authors)."
+            ) from None
+        raise
+    doc = dict(doc or {})
+    doc.setdefault("slug", author_slug)
     return doc
 
 
@@ -418,13 +408,13 @@ def main() -> int:
         "--list-authors",
         action="store_true",
         help="With --brand: emit [{slug, name, byline}, ...] for that brand's "
-             "authors fetched from qant-blog-drafts (instead of the full brand context).",
+             "authors fetched over the brand-key API (instead of the full brand context).",
     )
     parser.add_argument(
         "--get-author",
         metavar="AUTHOR_SLUG",
         help="With --brand: emit the FULL author doc (every Axiom-managed voice "
-             "field) from qant-blog-drafts as JSON. This is the skill's only "
+             "field) over the brand-key API as JSON. This is the skill's only "
              "author surface; never read author-profile-*.json exports.",
     )
     parser.add_argument(
@@ -445,7 +435,7 @@ def main() -> int:
             print("Error: --list-authors requires --brand <slug>.", file=sys.stderr)
             return 2
         try:
-            authors = list_authors_from_drafts(args.brand)
+            authors = list_authors_from_drafts(args.brand, brands_root=brands_root)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 2
@@ -457,7 +447,7 @@ def main() -> int:
             print("Error: --get-author requires --brand <slug>.", file=sys.stderr)
             return 2
         try:
-            author = get_author_from_drafts(args.brand, args.get_author)
+            author = get_author_from_drafts(args.brand, args.get_author, brands_root=brands_root)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 2

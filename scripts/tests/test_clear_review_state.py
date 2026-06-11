@@ -1,8 +1,4 @@
-"""Behavioral tests for scripts/clear_review_state.py.
-
-Stdlib + pytest; Firestore client is a MagicMock (the real
-google-cloud-firestore module supplies DELETE_FIELD sentinels).
-"""
+"""Behavioral tests for scripts/clear_review_state.py (API-over-brand-key)."""
 
 from __future__ import annotations
 
@@ -22,45 +18,27 @@ def _import_helper():
     return mod
 
 
-def _mock_client(*, draft_exists=True):
-    draft_ref = MagicMock()
-    draft_ref.get.return_value = MagicMock(exists=draft_exists)
-    drafts_col = MagicMock()
-    drafts_col.document.return_value = draft_ref
-    brand_doc = MagicMock()
-    brand_doc.collection.return_value = drafts_col
-    brands_col = MagicMock()
-    brands_col.document.return_value = brand_doc
-    client = MagicMock()
-    client.collection.return_value = brands_col
-    client._draft_ref = draft_ref
-    return client
-
-
-def test_clears_state_instructions_and_targets():
-    from google.cloud import firestore
-
+def test_clear_posts_clear_review_state():
     mod = _import_helper()
-    client = _mock_client()
-    ok = mod.clear_flags(client, "redbridgecyber", "d1", reason=None)
+    request_fn = MagicMock(return_value={"cleared": True, "id": "d1"})
+    ok = mod.clear_flags(request_fn, "redbridgecyber", "d1", reason=None)
     assert ok is True
-    written = client._draft_ref.update.call_args.args[0]
-    assert written["review_state"] is firestore.DELETE_FIELD
-    assert written["review_instructions"] is firestore.DELETE_FIELD
-    assert written["review_targets"] is firestore.DELETE_FIELD
+    args = request_fn.call_args.args
+    assert args[1] == "POST"
+    assert args[2] == "/brand/blog/articles/d1/clear-review-state"
 
 
 def test_clear_records_reason_when_given():
     mod = _import_helper()
-    client = _mock_client()
-    mod.clear_flags(client, "redbridgecyber", "d1", reason="image regenerated")
-    written = client._draft_ref.update.call_args.args[0]
-    assert written["review_state_cleared_reason"] == "image regenerated"
+    request_fn = MagicMock(return_value={"cleared": True, "id": "d1"})
+    mod.clear_flags(request_fn, "redbridgecyber", "d1", reason="image regenerated")
+    body = request_fn.call_args.args[3]
+    assert body == {"reason": "image regenerated"}
 
 
-def test_clear_returns_false_when_draft_missing():
+def test_clear_missing_article_returns_false():
     mod = _import_helper()
-    client = _mock_client(draft_exists=False)
-    ok = mod.clear_flags(client, "redbridgecyber", "gone", reason=None)
+    qant_api = mod.qant_api
+    request_fn = MagicMock(side_effect=qant_api.ApiError(404, "Article not found"))
+    ok = mod.clear_flags(request_fn, "redbridgecyber", "nope", reason=None)
     assert ok is False
-    client._draft_ref.update.assert_not_called()

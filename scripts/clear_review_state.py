@@ -1,136 +1,65 @@
 #!/usr/bin/env python3
-"""Clear the rewrite flags on a draft after a successful rewrite.
+"""Clear the rewrite flag on a draft article via the QANT brand-blog API.
 
-Used by ``/blog rewrite --from-queue``. Removes ``review_state``,
-``review_instructions``, and ``review_targets`` from the flagged
-Firestore doc so a subsequent ``list_pending_rewrites.py`` call does not
-re-surface it and no stale operator guidance leaks into a future flag.
-In the image-only rewrite branch this is the finishing step (the draft
-doc itself survives — only its hero image was regenerated).
+Image-only rewrites attach a fresh hero over the SAME article (no new doc,
+no delete) — afterwards the queue flag must clear so the article reappears
+in the Axiom review queue. POSTs
+``/brand/blog/articles/{id}/clear-review-state``; the server removes
+``review_state`` / ``review_instructions`` / ``review_targets`` and stamps
+``review_state_cleared_at`` (+ the optional reason).
 
-This script does NOT delete the draft doc itself; only the ``review_state``
-field. The draft remains visible in the Blog Manager UI under whatever
-lifecycle position it occupies. If the orchestrator chose to re-submit the
-rewritten content as a new doc (the current submit_draft_firestore.py
-behaviour — no slug-based upsert), the old flagged doc and the new
-rewritten doc both exist; clearing the flag on the old one stops it being
-re-queued. The deduplication of the two docs is a separate concern handled
-elsewhere (see the slug-based dedupe script in the qant workspace).
+Usage:
+    python3 clear_review_state.py --brand-slug redbridgecyber \
+        --draft-id <id> [--reason "image regenerated"]
 
-Environment
------------
-* ``QANT_BLOG_DRAFTS_PROJECT_ID``
-* ``QANT_BLOG_DRAFTS_WRITER_KEY``
-
-Both required; exits 2 if missing.
-
-Usage
------
-    python3 clear_review_state.py \\
-        --brand-slug redbridgecyber \\
-        --draft-id  Y14iwD70ljgFIEW5Mihi
-
-Optional ``--reason "<text>"`` records a short note on the doc as
-``review_state_cleared_at`` (server timestamp) and ``review_state_cleared_reason``,
-for audit visibility. Omit to clear silently.
-
-Exit codes
-----------
-* 0 — field cleared (or already absent).
-* 1 — Firestore error / doc missing.
-* 2 — env vars missing or SA key path unreadable.
+Exit codes: 0 ok · 1 API failure · 2 bad input / article missing.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
+import json
 import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import qant_api  # noqa: E402
 
 
-def clear_flags(client, brand_slug: str, draft_id: str, *, reason: str | None) -> bool:
-    """Delete all three rewrite-flag fields. Returns False when the draft
-    doc does not exist (caller reports the error)."""
-    from google.cloud import firestore  # type: ignore
-
-    ref = (
-        client.collection("brands")
-        .document(brand_slug)
-        .collection("drafts")
-        .document(draft_id)
-    )
-    if not ref.get().exists:
-        return False
-
-    update: dict = {
-        "review_state":        firestore.DELETE_FIELD,
-        "review_instructions": firestore.DELETE_FIELD,
-        "review_targets":      firestore.DELETE_FIELD,
-        "review_state_cleared_at": firestore.SERVER_TIMESTAMP,
-    }
-    if reason:
-        update["review_state_cleared_reason"] = reason
-    ref.update(update)
+def clear_flags(request_fn, brand_slug: str, draft_id: str, *, reason: str | None) -> bool:
+    """POST the clear. Returns False when the article doesn't exist."""
+    body = {"reason": reason} if reason else {}
+    try:
+        request_fn(brand_slug, "POST", f"/brand/blog/articles/{draft_id}/clear-review-state", body)
+    except qant_api.ApiError as e:
+        if e.status == 404:
+            return False
+        raise
     return True
 
 
-def _env() -> tuple[str, str]:
-    project = os.environ.get("QANT_BLOG_DRAFTS_PROJECT_ID")
-    key_path = os.environ.get("QANT_BLOG_DRAFTS_WRITER_KEY")
-    if not project:
-        sys.stderr.write("error: QANT_BLOG_DRAFTS_PROJECT_ID is not set.\n")
-        sys.exit(2)
-    if not key_path:
-        sys.stderr.write("error: QANT_BLOG_DRAFTS_WRITER_KEY is not set.\n")
-        sys.exit(2)
-    if not os.path.exists(key_path):
-        sys.stderr.write(f"error: SA key file not found at {key_path}.\n")
-        sys.exit(2)
-    return project, key_path
-
-
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.strip().splitlines()[0])
-    ap.add_argument("--brand-slug", required=True)
-    ap.add_argument("--draft-id", required=True)
-    ap.add_argument(
-        "--reason",
-        default=None,
-        help="Optional audit note recorded as review_state_cleared_reason.",
-    )
-    args = ap.parse_args()
-
-    project, key_path = _env()
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--brand-slug", required=True)
+    parser.add_argument("--draft-id", required=True)
+    parser.add_argument("--reason", default="",
+                        help="Optional audit note stored as review_state_cleared_reason.")
+    args = parser.parse_args()
 
     try:
-        from google.cloud import firestore  # type: ignore
-        from google.oauth2 import service_account  # type: ignore
-    except ImportError as exc:
-        sys.stderr.write(
-            f"error: required Python package missing ({exc}). "
-            "Install with `pip install google-cloud-firestore`.\n"
-        )
+        ok = clear_flags(qant_api.request, args.brand_slug, args.draft_id,
+                         reason=args.reason or None)
+    except qant_api.ApiError as e:
+        print(f"Error: API write failed: {e}", file=sys.stderr)
+        return 1
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 2
 
-    creds = service_account.Credentials.from_service_account_file(key_path)
-    client = firestore.Client(project=project, credentials=creds)
-
-    try:
-        ok = clear_flags(client, args.brand_slug, args.draft_id, reason=args.reason)
-    except Exception as exc:  # pylint: disable=broad-except
-        sys.stderr.write(f"error: Firestore update failed: {exc}\n")
-        return 1
-
     if not ok:
-        sys.stderr.write(
-            f"error: draft {args.draft_id} not found under "
-            f"brands/{args.brand_slug}/drafts.\n"
-        )
-        return 1
-
-    print(
-        f"cleared review flags on brands/{args.brand_slug}/drafts/{args.draft_id}"
-    )
+        print(f"Error: draft {args.draft_id} not found for brand {args.brand_slug}", file=sys.stderr)
+        return 2
+    print(json.dumps({"cleared": True, "draft_id": args.draft_id}))
     return 0
 
 
