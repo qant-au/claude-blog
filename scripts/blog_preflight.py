@@ -551,20 +551,32 @@ def gate_5_asset_link_integrity(draft_dir: Path) -> dict:
                 f"non-http(s) URL scheme is not allowed in published links: {href}"
             )
 
-    # JSON-LD validation
+    # JSON-LD validation — a page may carry several blocks (e.g. BlogPosting
+    # plus FAQPage); each must parse on its own, and the required-field /
+    # wordCount checks apply to the BlogPosting block.
     json_ld_ok = False
     declared_word_count: Optional[int] = None
     if parser.json_ld_blocks:
-        try:
-            obj = json.loads("".join(parser.json_ld_blocks))
+        objs = []
+        for i, block in enumerate(parser.json_ld_blocks):
+            try:
+                objs.append(json.loads(block))
+            except json.JSONDecodeError as e:
+                violations.append(f"JSON-LD block {i + 1} invalid: {e}")
+        if len(objs) == len(parser.json_ld_blocks):
             json_ld_ok = True
+        posting = next(
+            (o for o in objs if isinstance(o, dict) and o.get("@type") == "BlogPosting"),
+            None,
+        )
+        if posting is None:
+            violations.append("no BlogPosting JSON-LD block present")
+        else:
             required = ("headline", "image", "datePublished", "author")
-            missing = [k for k in required if not obj.get(k)]
+            missing = [k for k in required if not posting.get(k)]
             if missing:
                 violations.append(f"JSON-LD missing required fields: {missing}")
-            declared_word_count = obj.get("wordCount")
-        except json.JSONDecodeError as e:
-            violations.append(f"JSON-LD invalid: {e}")
+            declared_word_count = posting.get("wordCount")
     else:
         violations.append("no JSON-LD <script> block present")
 
