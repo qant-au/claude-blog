@@ -160,7 +160,16 @@ def _parse_frontmatter(raw: str) -> tuple[dict, str]:
                 fm[key] = []
             else:
                 current_list_key = None
-                fm[key] = value.strip('"').strip("'")
+                if value.startswith("[") and value.endswith("]"):
+                    # Inline flow list, e.g. tags: ["a", "b"] — without this
+                    # the raw string leaks into JSON-LD keywords as a
+                    # stringified array.
+                    try:
+                        fm[key] = json.loads(value.replace("'", '"'))
+                    except json.JSONDecodeError:
+                        fm[key] = value.strip('"').strip("'")
+                else:
+                    fm[key] = value.strip('"').strip("'")
     return fm, body
 
 
