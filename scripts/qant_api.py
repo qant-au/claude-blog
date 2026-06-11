@@ -134,6 +134,8 @@ def request(
         headers={
             "X-Brand-Key": brand_key,
             "Content-Type": "application/json",
+            # Cloudflare's bot rules reject urllib's default Python-urllib UA.
+            "User-Agent": "qant-blog-skill/2.0",
         },
     )
     try:
