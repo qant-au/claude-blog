@@ -321,21 +321,16 @@ def list_brands(brands_root: Path | None = None) -> list[dict[str, str]]:
     return out
 
 
-def list_authors_from_drafts(brand_slug: str) -> list[dict[str, str]]:
-    """Fetch ``brands/{brand_slug}/authors/*`` from qant-blog-drafts.
-
-    Returns ``[{slug, name, byline}, ...]`` sorted by slug. Used by the
-    skill's author picker when ``--author`` is omitted on ``/blog write``.
-
-    Env vars ``QANT_BLOG_DRAFTS_PROJECT_ID`` and ``QANT_BLOG_DRAFTS_WRITER_KEY``
-    are required (same pair the draft-submitter uses).
-    """
+def _drafts_client():
+    """Build the qant-blog-drafts Firestore client from the env-var pair the
+    draft-submitter uses (``QANT_BLOG_DRAFTS_PROJECT_ID`` +
+    ``QANT_BLOG_DRAFTS_WRITER_KEY``)."""
     project_id = os.environ.get("QANT_BLOG_DRAFTS_PROJECT_ID")
     key_path   = os.environ.get("QANT_BLOG_DRAFTS_WRITER_KEY")
     if not project_id or not key_path:
         raise RuntimeError(
             "QANT_BLOG_DRAFTS_PROJECT_ID and QANT_BLOG_DRAFTS_WRITER_KEY must "
-            "be set to list authors from qant-blog-drafts."
+            "be set to read authors from qant-blog-drafts."
         )
     if not Path(key_path).is_file():
         raise RuntimeError(
@@ -351,8 +346,17 @@ def list_authors_from_drafts(brand_slug: str) -> list[dict[str, str]]:
             f"Install with: pip install google-cloud-firestore"
         ) from None
 
-    creds  = service_account.Credentials.from_service_account_file(key_path)
-    client = firestore.Client(project=project_id, credentials=creds)
+    creds = service_account.Credentials.from_service_account_file(key_path)
+    return firestore.Client(project=project_id, credentials=creds)
+
+
+def list_authors_from_drafts(brand_slug: str) -> list[dict[str, str]]:
+    """Fetch ``brands/{brand_slug}/authors/*`` from qant-blog-drafts.
+
+    Returns ``[{slug, name, byline}, ...]`` sorted by slug. Used by the
+    skill's author picker when ``--author`` is omitted on ``/blog write``.
+    """
+    client = _drafts_client()
     col = client.collection("brands").document(brand_slug).collection("authors")
     out: list[dict[str, str]] = []
     for snap in col.stream():
@@ -363,6 +367,39 @@ def list_authors_from_drafts(brand_slug: str) -> list[dict[str, str]]:
             "byline": d.get("byline") or "",
         })
     return sorted(out, key=lambda r: r["slug"])
+
+
+def get_author_from_drafts(
+    brand_slug: str,
+    author_slug: str,
+    _client=None,
+) -> dict:
+    """Fetch ONE full author doc from qant-blog-drafts.
+
+    This is the /blog skill's single author surface: the returned dict
+    carries the complete Axiom-managed voice payload (name, byline, bio,
+    target_audience, locale, pronoun_stance, register, banned_phrases,
+    signature_moves, writing_style) plus ``slug``. Skills must use this,
+    never on-disk author-profile-*.json exports, which go stale the moment
+    the profile is edited in Axiom.
+
+    ``_client`` is a test seam; production callers omit it.
+    """
+    client = _client if _client is not None else _drafts_client()
+    snap = (
+        client.collection("brands").document(brand_slug)
+              .collection("authors").document(author_slug)
+              .get()
+    )
+    if not getattr(snap, "exists", False):
+        raise LookupError(
+            f"author '{author_slug}' not found in "
+            f"qant-blog-drafts.brands/{brand_slug}/authors. Create or edit "
+            f"authors in Axiom (Instance Config → Brands → Authors)."
+        )
+    doc = snap.to_dict() or {}
+    doc["slug"] = author_slug
+    return doc
 
 
 def main() -> int:
@@ -382,6 +419,13 @@ def main() -> int:
         action="store_true",
         help="With --brand: emit [{slug, name, byline}, ...] for that brand's "
              "authors fetched from qant-blog-drafts (instead of the full brand context).",
+    )
+    parser.add_argument(
+        "--get-author",
+        metavar="AUTHOR_SLUG",
+        help="With --brand: emit the FULL author doc (every Axiom-managed voice "
+             "field) from qant-blog-drafts as JSON. This is the skill's only "
+             "author surface; never read author-profile-*.json exports.",
     )
     parser.add_argument(
         "--brands-root",
@@ -406,6 +450,23 @@ def main() -> int:
             print(f"Error: {e}", file=sys.stderr)
             return 2
         print(json.dumps(authors, indent=2, sort_keys=True))
+        return 0
+
+    if args.get_author:
+        if not args.brand:
+            print("Error: --get-author requires --brand <slug>.", file=sys.stderr)
+            return 2
+        try:
+            author = get_author_from_drafts(args.brand, args.get_author)
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+        except LookupError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        # default=str: Firestore timestamps (created_at / updated_at /
+        # mirrored_at) aren't JSON-native; render them as ISO-ish strings.
+        print(json.dumps(author, indent=2, sort_keys=True, default=str))
         return 0
 
     try:

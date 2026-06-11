@@ -37,7 +37,7 @@ parent `blog/SKILL.md` "Per-brand and per-author flags" section:
 | Flag | Effect on workflow |
 |------|--------------------|
 | `--brand <slug>` (optional) | Phase 0.5 resolves brand context (env + `.brand-seo.yml` `content:` block + author list); brand identity is injected into the drafting prompt; Phase 7.5 writes the draft to the shared `qant-blog-drafts` Firestore (one project for all brands; auth via two `QANT_BLOG_DRAFTS_*` env vars). **If omitted, Phase 0.5 prompts the user with a brand picker.** |
-| `--author <slug>` (optional) | Phase 0.6 reads the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed via the Blog Manager UI in the consumer app). The Firestore doc carries `name`, `byline`, `bio`, `writing_style`, plus structured-voice fields (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. **If omitted, Phase 0.6 prompts the user with the author list from `--list-authors --brand <slug>`, highlighting `content.default_author`.** |
+| `--author <slug>` (optional) | Phase 0.6 reads the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed in Axiom: Instance Config → Brands → Authors); Phase 0.6 fetches the full doc with `--get-author`. The Firestore doc carries `name`, `byline`, `bio`, `writing_style`, plus structured-voice fields (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. **If omitted, Phase 0.6 prompts the user with the author list from `--list-authors --brand <slug>`, highlighting `content.default_author`.** |
 | `--no-submit` | Skips Phase 7.5 entirely (article ends up local-only). |
 
 Note: there is no `--staging` / `--development` flag anymore. Drafts always go to the single `qant-blog-drafts` Firestore project regardless of which env the contributor's brand site happens to be wired to. The loader reads `.env`, `.env.stg`, `.env.dev` in precedence order — first existing file wins — to pick up `NEXT_PUBLIC_BRAND_DOMAIN`.
@@ -119,7 +119,7 @@ error.
 
 The on-disk `brands/<slug>/authors/` bundles were retired in Phase F-post.
 Authors live in `qant-blog-drafts.brands/{brand_slug}/authors/{slug}`,
-managed via the Blog Manager UI in the consumer app. Every author has
+managed in Axiom (Instance Config → Brands → Authors). Every author has
 a full Phase F shape: `name`, `byline`, `bio`, `writing_style`,
 `target_audience`, plus structured-voice fields (`locale`,
 `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`).
@@ -139,8 +139,8 @@ to be set (the same pair the draft-submitter uses).
 - If `--author <slug>` was passed → confirm the slug is in the
   `--list-authors` output. If it isn't, stop and tell the operator:
   "Author `<slug>` doesn't exist in qant-blog-drafts under brand
-  `<brand_slug>`. Create it via the Blog Manager UI in the consumer app
-  (Brands → <brand> → New Author) before re-running."
+  `<brand_slug>`. Create it in Axiom (Instance Config → Brands →
+  <brand> → Authors → New Author) before re-running."
 
 - If `--author` was omitted → prompt the user. Build the list as:
 
@@ -156,13 +156,21 @@ to be set (the same pair the draft-submitter uses).
   stdin = take the default. Accept either the number or the slug.
 
   If the brand has zero authors in qant-blog-drafts, stop with the
-  Blog Manager UI instruction above.
+  Axiom instruction above.
 
 **3. Load the author doc fields.**
 
-The Phase 0.6 author surface available to the drafting prompt comes
-straight from the Firestore doc — there's no longer a fenced
-untrusted-data load from disk. The skill reads:
+Fetch the full author doc from qant-blog-drafts with:
+
+```bash
+python3 scripts/load_brand_context.py --get-author <author_slug> --brand <slug>
+```
+
+The JSON on stdout is the ONLY author surface for this run. **Never
+read `author-profile-*.json`, exported author JSON, or any other
+on-disk author file**: exports are point-in-time snapshots that go
+stale the moment the profile is edited in Axiom (Instance Config →
+Brands → Authors); the Firestore doc is the live record. The fields:
 
 - `name` → article frontmatter `author:` + per-draft `author.name`.
 - `byline` → `authorByline` frontmatter.
@@ -717,7 +725,7 @@ in Phase 0.5, ship the draft to the brand's instance.
    `submit_draft_firestore.py` will:
    - Verify the author exists in
      `qant-blog-drafts.brands/{brand_slug}/authors/{author_slug}` — fail
-     fast with a clear "create the author via the Blog Manager UI first"
+     fast with a clear "create the author in Axiom first"
      message if it doesn't.
    - Drop any leaked `author.bio` / `author.byline` from the payload
      (with a stderr warning) and stamp the canonical `slug` / `name`

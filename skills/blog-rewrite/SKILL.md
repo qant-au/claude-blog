@@ -43,7 +43,7 @@ as `blog-write`:
 | Flag | Effect on workflow |
 |------|--------------------|
 | `--brand <slug>` | Phase 0.5 resolves brand context; identity injected into the rewrite prompt; Phase 7 submits the rewritten draft to the brand's qant API. |
-| `--author <slug>` | Phase 0.6 reads the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` (managed via the Blog Manager UI); `writing_style` + structured-voice fields shape the rewrite prompt; `bio` is rendered into the article foot; `byline` populates frontmatter byline. The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. |
+| `--author <slug>` | Phase 0.6 fetches the FULL author doc via `python3 scripts/load_brand_context.py --get-author <slug> --brand <brand_slug>` (qant-blog-drafts, managed in Axiom: Instance Config → Brands → Authors); `writing_style` + structured-voice fields shape the rewrite prompt; `bio` is rendered into the article foot; `byline` populates frontmatter byline. **Never read `author-profile-*.json` or any other on-disk author file**: the Firestore doc is the live record. |
 | `--from-queue` | **Queue mode** (v1.9.2). Skip the positional `<file-path>` argument; instead pull every draft flagged for rewrite in `qant-blog-drafts.brands/{brand_slug}/drafts/{*}` (`review_state == "needs_rewrite"`) and rewrite each one in sequence. When combined with `--brand <slug>`, the drain is scoped to that one brand. With `--all-brands` (or no `--brand`), the drain enumerates every brand in `qant-blog-drafts.brands/` and merges the queues. See *Queue mode (Phase 0.3)* below. |
 | `--all-brands` | Multi-brand queue mode (v1.10). Implies `--from-queue`. Enumerates `qant-blog-drafts.brands/*` and rewrites every flagged draft across every brand in one pass. **This is the default when `/blog rewrite` is invoked with NO arguments** — see *Phase 0: argument dispatch* for the auto-mode contract. |
 | `--no-submit` | Skips the submission phase entirely. |
@@ -130,7 +130,16 @@ a. Read the full draft doc from Firestore (the list script returns
    ```
 
 b. Use the doc's `author.slug` as the resolved author for Phase 0.6 (no
-   prompt — the flagged draft carries its own author). Use
+   prompt; the flagged draft carries its own author), then fetch that
+   author's FULL doc:
+   ```bash
+   python3 scripts/load_brand_context.py --get-author <author.slug> --brand <brand_slug>
+   ```
+   The JSON on stdout supplies the author-voice block for the rewrite
+   prompt (`writing_style` + the structured-voice fields), the
+   `banned_phrases` list for FLOW review, and `bio`/`byline` at render.
+   **Never read `author-profile-*.json` or any other on-disk author
+   file**: exports go stale against the Axiom-managed doc. Use
    `body_markdown` as the input to the rewrite phases (skip Phase 1's
    "detect format" step — the body is markdown).
 
@@ -654,7 +663,7 @@ as `blog-write` Phase 7.5:
 
    The script verifies the author exists in
    `qant-blog-drafts.brands/{brand_slug}/authors/{author_slug}` and
-   fails fast with a "create the author via the Blog Manager UI first"
+   fails fast with a "create the author in Axiom first"
    message if it doesn't. Report the returned `draft_path` to the user.
 
 4. **On failure**: surface the script's stderr verbatim, write the

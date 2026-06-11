@@ -16,7 +16,7 @@ license: MIT
 compatibility: Requires Claude Code and Python 3.11+ for quality scoring
 metadata:
   author: AgriciDaniel
-  version: "1.9.1"
+  version: "1.9.2"
 user-invokable: true
 argument-hint: "[write|rewrite|analyze|brief|calendar|cannibalization|strategy|outline|seo-check|schema|repurpose|geo|image|audit|factcheck|persona|brand|discourse|taxonomy|notebooklm|audio|google|update|cluster|multilingual|translate|localize|locale-audit|flow] [topic-or-file]"
 ---
@@ -79,7 +79,7 @@ to the sub-skill as part of command routing:
 | Flag | Default | Effect |
 |------|---------|--------|
 | `--brand <slug>` | **prompt** | Resolves `/Users/adam/Projects/qant/brands/<slug>/` via `scripts/load_brand_context.py`. Injects brand identity (display_name, canonical, content scope) into the drafting prompt alongside `BRAND.md` / `VOICE.md`. **When omitted, Phase 0.5 enumerates `--list-brands` and prompts.** |
-| `--author <slug>` | **prompt with brand-level `content.default_author` highlighted** | Resolves the author from `qant-blog-drafts.brands/{brand_slug}/authors/{slug}` via `scripts/load_brand_context.py --list-authors --brand <slug>`. The Firestore doc carries every field — `name`, `byline`, `bio`, `writing_style`, plus the structured-voice columns (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post; create / edit / delete authors via the Blog Manager UI in the consumer app instead. |
+| `--author <slug>` | **prompt with brand-level `content.default_author` highlighted** | Resolves the author slug via `scripts/load_brand_context.py --list-authors --brand <slug>`, then fetches the FULL doc with `--get-author <slug> --brand <slug>`: the only author surface; never read `author-profile-*.json` exports. The Firestore doc carries every field: `name`, `byline`, `bio`, `writing_style`, plus the structured-voice columns (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post; create / edit / delete authors in Axiom (Instance Config → Brands → Authors). |
 | `--no-submit` | unset | Skips the draft-submission phase entirely. Article ends up as a local markdown file only. |
 | `--from-queue` (rewrite only, v1.9.2) | unset | Queue mode for `/blog rewrite`. Reads every draft in `qant-blog-drafts.brands/{brand_slug}/drafts/` flagged with `review_state == "needs_rewrite"` and rewrites each in sequence, clearing the flag on success. With `--brand <slug>`, scoped to that brand; with `--all-brands` (or no `--brand`), enumerates every brand. Skips the positional `<file-path>` argument. See `skills/blog-rewrite/SKILL.md` Phase 0.3. |
 | `--all-brands` (rewrite only, v1.10) | unset | Multi-brand queue mode. Implies `--from-queue`. **`/blog rewrite` with no arguments defaults to this** — the orchestrator passes `--from-queue --all-brands` straight through to `blog-rewrite` without prompting for brand or file path. |
@@ -105,7 +105,7 @@ Resolution order for `--author`:
 1. Explicit `--author <slug>` argument. The skill verifies the slug
    exists in `qant-blog-drafts.brands/{brand_slug}/authors/` before
    continuing; if it doesn't, the skill stops and asks the operator to
-   create the author via the Blog Manager UI first.
+   create the author in Axiom (Instance Config → Brands → Authors) first.
 2. Otherwise prompt the user with the list returned by
    `scripts/load_brand_context.py --list-authors --brand <slug>`,
    defaulting to `brand_identity.content.default_author` (or legacy
@@ -520,8 +520,9 @@ Manager UI in the consumer app). The Firestore doc carries every field:
 | `signature_moves` | Phrases / patterns the author favours. Soft bias in the writer-agent prompt. |
 
 The on-disk `skills/blog/authors/<slug>/` bundles were retired in
-Phase F-post; create / edit / delete authors via the Blog Manager UI
-instead. See `skills/blog/authors/README.md` for the retirement notice.
+Phase F-post; create / edit / delete authors in Axiom (Instance
+Config → Brands → Authors). See `skills/blog/authors/README.md` for
+the retirement notice.
 
 ### DISCOURSE.md scope
 

@@ -19,6 +19,16 @@ future readers.
 
 ### Added
 
+- `load_brand_context.py --get-author <slug> --brand <slug>` (v1.9.2):
+  fetches the FULL author doc (name, byline, bio, target_audience,
+  locale, pronoun_stance, register, banned_phrases, signature_moves,
+  writing_style) from `qant-blog-drafts.brands/{brand}/authors/{slug}`.
+  This is now the skill's ONLY author surface: `blog-write` Phase 0.6
+  and both `blog-rewrite` entry modes (file-path + `--from-queue`) run
+  it explicitly, and the skills prohibit reading `author-profile-*.json`
+  exports or any other on-disk author file. Author management pointers
+  updated from the retired consumer Blog Manager UI to Axiom (Instance
+  Config → Brands → Authors).
 - `scripts/submit_draft_firestore.py`: writes drafts to the shared
   `qant-blog-drafts` Firestore project via env-var-based service-account
   auth (`QANT_BLOG_DRAFTS_PROJECT_ID`, `QANT_BLOG_DRAFTS_WRITER_KEY`).

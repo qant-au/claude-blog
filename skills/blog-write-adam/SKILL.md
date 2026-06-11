@@ -33,8 +33,8 @@ When invoked:
   `qant-blog-drafts.brands/{brand_slug}/authors/adam-burgess` —
   the on-disk `brands/<slug>/authors/<slug>/` bundles were retired in
   Phase F-post. If the author doc doesn't exist under the brand the
-  user picked, the skill stops and asks the operator to create it via
-  the Blog Manager UI in the consumer app first.
+  user picked, the skill stops and asks the operator to create it in
+  Axiom (Instance Config → Brands → Authors) first.
 * Phase 5a (frontmatter) sets `author:` from the Firestore doc's
   `name` field and `authorByline:` from its `byline` field.
 * Phase 7 renders the bio block from the Firestore `bio` field into

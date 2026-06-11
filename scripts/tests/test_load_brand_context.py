@@ -237,6 +237,103 @@ def test_cli_missing_brand_exits_nonzero(tmp_path: Path):
     assert "Error" in proc.stderr
 
 
+def test_get_author_returns_the_full_firestore_doc():
+    """--get-author is the skill's ONLY author surface: it must return every
+    voice field from qant-blog-drafts, so the drafting/rewrite prompts never
+    fall back to stale on-disk author-profile-*.json exports."""
+    mod = _import_helper()
+
+    doc = {
+        "name":            "Adam Burgess",
+        "byline":          "Founder, Red Bridge Cyber",
+        "bio":             "Thirty years in Australian ICT.",
+        "target_audience": "Australian SMB owner-operators.",
+        "locale":          "en-AU",
+        "pronoun_stance":  "first_person_singular",
+        "register":        "sharp",
+        "banned_phrases":  ["journey", "leverage"],
+        "signature_moves": ["answer-first"],
+        "writing_style":   "Plain English. No corporate-speak.",
+        "brand_slug":      "redbridgecyber",
+    }
+
+    class _Snap:
+        exists = True
+        id = "adam-burgess"
+
+        @staticmethod
+        def to_dict():
+            return dict(doc)
+
+    class _Ref:
+        def get(self):
+            return _Snap()
+
+    class _Chain:
+        def collection(self, _name):
+            return self
+
+        def document(self, _name):
+            return self
+
+        def get(self):
+            return _Snap()
+
+    out = mod.get_author_from_drafts("redbridgecyber", "adam-burgess", _client=_Chain())
+    assert out["slug"] == "adam-burgess"
+    for field in (
+        "name", "byline", "bio", "target_audience", "locale",
+        "pronoun_stance", "register", "banned_phrases",
+        "signature_moves", "writing_style",
+    ):
+        assert out[field] == doc[field], field
+
+
+def test_get_author_missing_points_at_axiom():
+    """A missing author must fail loudly with the Axiom management path,
+    not silently fall back to disk files."""
+    mod = _import_helper()
+
+    class _Snap:
+        exists = False
+
+        @staticmethod
+        def to_dict():
+            return {}
+
+    class _Chain:
+        def collection(self, _name):
+            return self
+
+        def document(self, _name):
+            return self
+
+        def get(self):
+            return _Snap()
+
+    with pytest.raises(LookupError) as exc:
+        mod.get_author_from_drafts("redbridgecyber", "ghost", _client=_Chain())
+    assert "Axiom" in str(exc.value)
+    assert "ghost" in str(exc.value)
+
+
+def test_cli_get_author_requires_brand(tmp_path: Path):
+    proc = _run(["--get-author", "adam-burgess", "--brands-root", str(tmp_path)])
+    assert proc.returncode == 2
+    assert "--brand" in proc.stderr
+
+
+def test_cli_get_author_without_env_exits_2(tmp_path: Path):
+    proc = subprocess.run(
+        [sys.executable, str(HELPER), "--get-author", "adam-burgess",
+         "--brand", "redbridgecyber", "--brands-root", str(tmp_path)],
+        capture_output=True, text=True,
+        env={"PATH": "/usr/bin:/bin"},  # no QANT_BLOG_DRAFTS_* vars
+    )
+    assert proc.returncode == 2
+    assert "QANT_BLOG_DRAFTS" in proc.stderr
+
+
 def test_cli_does_not_leak_env_secrets(tmp_path: Path):
     """Legacy env files may still carry BRAND_KEY lines; the loader must
     not echo their values anywhere in its output."""
