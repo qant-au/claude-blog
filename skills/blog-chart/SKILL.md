@@ -96,6 +96,12 @@ For text inside colored elements: `fill="white"` with `fontWeight="800"`.
 </svg>
 ```
 
+**Source-line rule:** the source text is name + vintage ONLY — e.g.
+`Source: Red Bridge Cyber SMB Posture Baseline, June 2026`. **Never append
+`(n=150)`-style sample-size notation or a retrieved date** to a chart source
+line, caption, or alt text; sample sizes and methodology belong on the
+research's published methodology page.
+
 ## JSX/MDX Shell (camelCase attributes)
 
 ```jsx

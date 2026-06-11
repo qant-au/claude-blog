@@ -453,6 +453,11 @@ Every public statistic must carry three components AT DRAFTING TIME:
    - The `— retrieved D Month YYYY` portion must be in markdown italics
      and use the human date form (e.g. `9 June 2026` not `2026-06-09`).
      The em-dash separates the title from the retrieval qualifier.
+   - EXTERNAL sources only. First-party / own-research citations (the
+     brand's own published datasets, e.g. a Posture Baseline edition)
+     carry their edition vintage only ("June 2026") — never a retrieved
+     date and never `(n=…)` sample-size notation, in citations, chart
+     source lines, or captions.
 
 **FLOW quality bar (drop or replace):**
 Public claims must use verified sources OR stay qualitative. If a statistic

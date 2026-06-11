@@ -36,11 +36,15 @@ Do NOT use this template for:
 - "Developer Tooling Survey: We Asked 2,000 Engineers - Here's What We Found"
 
 **Title Rules:**
-- Include the specific sample size (N) - this is your credibility signal
 - Name what was analyzed (pull requests, blogs, engineers, etc.)
 - "We Analyzed/Studied/Surveyed" establishes original research
 - "Here's What We Found" signals actionable insights
 - Keep under 70 characters for SERP display when possible
+- **Never use `(n=150)`-style sample-size notation** — in titles, citations,
+  chart source lines, captions, or alt text. When the research has a published
+  methodology page, link to it; sample sizes belong there (or in the
+  Methodology section as prose), not appended to attributions. A citation is
+  source name + vintage only (e.g. "Source: Acme Pull Request Study, June 2026").
 
 **Alternative Title Formats:**
 - "[N] [Things] Analyzed: [Key Finding] ([Year] Study)"
@@ -145,7 +149,7 @@ Do NOT use this template for:
 
 - Year anchor in prose: write "In 2026, ..." or "As of Q1 2026, ..." BEFORE the number, not in a parenthetical.
 - Inline citation: name the publisher AND the document or report title.
-- Source block at the bottom: include the full URL plus the italicised qualifier `*— retrieved D Month YYYY*` (e.g. `*— retrieved 9 June 2026*`) for every cited source.
+- Source block at the bottom: include the full URL plus the italicised qualifier `*— retrieved D Month YYYY*` (e.g. `*— retrieved 9 June 2026*`) for every cited EXTERNAL source. The study's own first-party data carries its publication vintage only — no retrieved date, no `(n=…)` notation.
 
 Drop unverifiable stats. Replace contradicted stats with verified alternatives. Reference: `skills/blog/references/flow-alignment.md`.
 
@@ -354,7 +358,7 @@ We expected [expected result], but the data showed [actual result]. [Brief expla
 
 Before publishing, verify:
 
-- [ ] Title includes specific sample size (N)
+- [ ] No `(n=…)` sample-size notation anywhere (titles, citations, chart source lines, captions)
 - [ ] TL;DR contains 3 data points and is under 60 words
 - [ ] Key Findings has 5-7 self-contained, citable bullet points
 - [ ] Methodology section includes sample size, time period, source, and limitations

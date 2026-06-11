@@ -277,7 +277,7 @@ fabrication risks in quality scoring.
 
 - Year anchor in prose: "In 2026, [Source] found..." (NOT: "...found ... (Source, 2026).")
 - Inline citation: publisher AND title, e.g. "Ahrefs, AI Overviews CTR update".
-- Source block: full URL plus the italicised qualifier `*— retrieved D Month YYYY*` (e.g. `*— retrieved 9 June 2026*`) for every cited source.
+- Source block: full URL plus the italicised qualifier `*— retrieved D Month YYYY*` (e.g. `*— retrieved 9 June 2026*`) for every cited EXTERNAL source. First-party / own-research citations carry their edition vintage only (e.g. "June 2026") — never a retrieved date, never `(n=…)` notation.
 
 Drop unverifiable stats. Replace contradicted stats with verified alternatives. See `flow-alignment.md`.
 

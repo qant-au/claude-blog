@@ -116,7 +116,7 @@ For every public statistic in the post, verify all three components:
 
 - Year anchor appears in prose ("In 2026," or "As of Q1 2026,") BEFORE the statistic, not buried in parentheses.
 - Inline citation names the publisher AND the document title (or report name).
-- Source block at the bottom of the post includes the URL plus the italicised qualifier `*— retrieved D Month YYYY*` (e.g. `*— retrieved 9 June 2026*`) for each cited source.
+- Source block at the bottom of the post includes the URL plus the italicised qualifier `*— retrieved D Month YYYY*` (e.g. `*— retrieved 9 June 2026*`) for each cited EXTERNAL source. First-party / own-research citations (the brand's own published datasets) carry their edition vintage only — never a retrieved date and never `(n=…)` sample-size notation.
 
 Posts that fail any of the three either drop the unverifiable claim or replace it with a verified alternative. See `skills/blog/references/flow-alignment.md`. For a one-shot prompt-driven check, see `/blog flow optimize`.
 
