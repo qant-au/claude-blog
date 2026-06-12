@@ -124,6 +124,7 @@ Resolution order for `--author`:
 3. Route to the appropriate sub-skill:
    - `write` → `blog-write` (new articles from scratch)
    - `rewrite` → `blog-rewrite` (optimize existing posts)
+   - `publish` → `blog-publish` (render approved drafts onto a brand site + schedule them, then delete from the DB)
    - `analyze` → `blog-analyze` (quality scoring)
    - `brief` → `blog-brief` (content briefs)
    - `calendar` / `plan` → `blog-calendar` (editorial calendars)
