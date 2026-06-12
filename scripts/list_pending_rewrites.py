@@ -6,9 +6,9 @@ with its own key (``GET /brand/blog/rewrites``); ``--all-brands``
 enumerates every brand directory under qant/brands/ whose env file
 carries a brand key and merges the per-brand queues.
 
-Row shape matches the legacy queue contract:
+Row shape (every row is a `status == "rewrite"` article):
     {brand_slug, draft_id, draft_path, slug, title, author_slug,
-     category, review_state, review_targets, word_count}
+     category, status, review_instructions, review_targets, word_count}
 
 Usage:
     python3 list_pending_rewrites.py --brand redbridgecyber
@@ -29,23 +29,25 @@ import qant_api  # noqa: E402
 
 
 def _row(brand_slug: str, article: dict) -> dict:
-    """Shape one queue row from an article response. ``review_targets``
-    defaults to content-only for legacy flags set before targets existed."""
+    """Shape one queue row from an article response. Every row here is a
+    rewrite item (``status == "rewrite"``). ``review_targets`` defaults to
+    content-only for legacy flags set before targets existed."""
     metadata = article.get("metadata") or {}
     author = article.get("author") or {}
     body = article.get("body_markdown") or ""
     article_id = article.get("id") or ""
     return {
-        "brand_slug":     brand_slug,
-        "draft_id":       article_id,
-        "draft_path":     f"/brand/blog/articles/{article_id}",
-        "slug":           article.get("slug") or "",
-        "title":          article.get("title") or "",
-        "author_slug":    author.get("slug") or "",
-        "category":       article.get("category") or "",
-        "review_state":   metadata.get("review_state") or "",
-        "review_targets": metadata.get("review_targets") or {"content": True, "image": False},
-        "word_count":     len(body.split()) if body else 0,
+        "brand_slug":          brand_slug,
+        "draft_id":            article_id,
+        "draft_path":          f"/brand/blog/articles/{article_id}",
+        "slug":                article.get("slug") or "",
+        "title":               article.get("title") or "",
+        "author_slug":         author.get("slug") or "",
+        "category":            article.get("category") or "",
+        "status":              article.get("status") or "rewrite",
+        "review_instructions": metadata.get("review_instructions") or "",
+        "review_targets":      metadata.get("review_targets") or {"content": True, "image": False},
+        "word_count":          len(body.split()) if body else 0,
     }
 
 

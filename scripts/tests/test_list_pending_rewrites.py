@@ -24,10 +24,10 @@ def _article(**over):
         "slug": "test-post",
         "title": "Test Post",
         "category": "security",
+        "status": "rewrite",
         "author": {"slug": "adam-burgess", "name": "Adam Burgess"},
         "body_markdown": "one two three",
         "metadata": {
-            "review_state": "needs_rewrite",
             "review_instructions": "Fix intro",
             "review_targets": {"content": True, "image": False},
         },
@@ -49,7 +49,8 @@ def test_rows_match_legacy_queue_shape():
     assert row["title"] == "Test Post"
     assert row["author_slug"] == "adam-burgess"
     assert row["category"] == "security"
-    assert row["review_state"] == "needs_rewrite"
+    assert row["status"] == "rewrite"
+    assert row["review_instructions"] == "Fix intro"
     assert row["review_targets"] == {"content": True, "image": False}
     assert row["word_count"] == 3
 
@@ -57,7 +58,7 @@ def test_rows_match_legacy_queue_shape():
 def test_rows_default_targets_content_only_for_legacy_flags():
     mod = _import_helper()
     art = _article()
-    art["metadata"] = {"review_state": "needs_rewrite"}
+    art["metadata"] = {}
     request_fn = MagicMock(return_value={"items": [art]})
     rows = mod.query_brand(request_fn, "redbridgecyber")
     assert rows[0]["review_targets"] == {"content": True, "image": False}

@@ -44,7 +44,7 @@ as `blog-write`:
 |------|--------------------|
 | `--brand <slug>` | Phase 0.5 resolves brand context; identity injected into the rewrite prompt; Phase 5.6 submits the rewritten draft to the brand's instance via the QANT brand-blog API (brand-key auth). |
 | `--author <slug>` | Phase 0.6 fetches the FULL author doc via `python3 scripts/load_brand_context.py --get-author <slug> --brand <brand_slug>` (brand-blog API `GET /brand/blog/authors/{slug}`, managed in Axiom: Instances → Brands → Authors); `writing_style` + structured-voice fields shape the rewrite prompt; `bio` is rendered into the article foot; `byline` populates frontmatter byline. **Never read `author-profile-*.json` or any other on-disk author file**: the API-served doc is the live record. |
-| `--from-queue` | **Queue mode** (v1.9.2). Skip the positional `<file-path>` argument; instead pull every article flagged for rewrite (`review_state == "needs_rewrite"`, read via `GET /brand/blog/rewrites` with the brand's key) and rewrite each one in sequence. When combined with `--brand <slug>`, the drain is scoped to that one brand. With `--all-brands` (or no `--brand`), the drain enumerates every brand dir under `/Users/adam/Projects/qant/brands/` that has a brand key in its env file and merges the queues. See *Queue mode (Phase 0.3)* below. |
+| `--from-queue` | **Queue mode** (v1.9.2). Skip the positional `<file-path>` argument; instead pull every article flagged for rewrite (`status == "rewrite"`, read via `GET /brand/blog/rewrites` with the brand's key) and rewrite each one in sequence. When combined with `--brand <slug>`, the drain is scoped to that one brand. With `--all-brands` (or no `--brand`), the drain enumerates every brand dir under `/Users/adam/Projects/qant/brands/` that has a brand key in its env file and merges the queues. See *Queue mode (Phase 0.3)* below. |
 | `--all-brands` | Multi-brand queue mode (v1.10). Implies `--from-queue`. Enumerates the brand dirs with keys and rewrites every flagged draft across every brand in one pass. **This is the default when `/blog rewrite` is invoked with NO arguments** — see *Phase 0: argument dispatch* for the auto-mode contract. |
 | `--no-submit` | Skips the submission phase entirely. |
 
@@ -87,9 +87,10 @@ combined with the dispatch above suppresses it.
 The operator-facing trigger here is "I don't want to go hunting for
 articles that need a rewrite — read every flagged draft, rewrite it, clear
 the flag." Articles get flagged in Axiom (Instances → (instance) →
-Brands → (brand) → Articles → Rewrite), which sets the top-level field
-`review_state: "needs_rewrite"`. The skill never sets that
-field itself — it only consumes the flag and clears it on success.
+Brands → (brand) → Articles → Rewrite), which sets the article
+`status: "rewrite"` (carrying `review_targets` + `review_instructions`).
+The skill never sets that status itself — it only consumes the flag and
+clears it (status back to `draft`) on success.
 
 **1. Fetch the queue.** No env vars needed — each brand is queried via
 `GET /brand/blog/rewrites` with its own `NEXT_PUBLIC_BRAND_KEY`
@@ -104,8 +105,9 @@ python3 scripts/list_pending_rewrites.py --brand <brand-slug>
 ```
 
 The script returns a JSON array of `{brand_slug, draft_id, draft_path,
-slug, title, author_slug, category, review_state, review_targets,
-word_count}` per flagged draft — `brand_slug` is populated per row so
+slug, title, author_slug, category, status, review_instructions,
+review_targets, word_count}` per flagged draft (`status` is always
+`"rewrite"`) — `brand_slug` is populated per row so
 the iterator can re-resolve brand context per draft in multi-brand mode.
 `review_targets` is `{content: bool, image: bool}` (defaulted to
 `{content: true, image: false}` for drafts flagged before targets
@@ -145,8 +147,8 @@ b. Use the doc's `author_slug` as the resolved author for Phase 0.6 (no
    `body_markdown` as the input to the rewrite phases (skip Phase 1's
    "detect format" step — the body is markdown).
 
-b.1. **Read `review_instructions` from the doc** (top-level field, sibling
-   to `review_state`). Axiom's Rewrite modal lets the
+b.1. **Read `review_instructions` from the queue row** (surfaced in the
+   article `metadata`). Axiom's Rewrite modal lets the
    operator type free-form guidance — for example, "remove the SCIF
    reference, replace with: at a conference with a senior federal
    government representative presenting", or "drop the third subhead;
@@ -163,8 +165,8 @@ b.1. **Read `review_instructions` from the doc** (top-level field, sibling
    Surface a one-line "instructions: <first 80 chars>…" entry in the
    per-draft progress log so the operator sees the guidance was loaded.
 
-b.2. **Read `review_targets` from the doc** (top-level field, sibling to
-   `review_state`; default `{content: true, image: false}` when absent).
+b.2. **Read `review_targets` from the queue row** (surfaced in the article
+   `metadata`; default `{content: true, image: false}` when absent).
    Log `targets: content=<bool> image=<bool>` in the per-draft progress
    line, then dispatch:
 
@@ -259,7 +261,7 @@ e. **After Phase 5.6 returns success AND step d.1/d.2 has run** — the
    **Order matters.** Do NOT delete the original before submit
    succeeds. A submit failure with the original already deleted is
    data loss. If Phase 5.6 fails, SKIP step e entirely so the original
-   stays in the brand's instance with its `review_state: "needs_rewrite"`
+   stays in the brand's instance with its `status: "rewrite"`
    flag intact and the next queue pass retries.
 
    The older `clear_review_state.py` helper still exists for the manual
@@ -286,7 +288,7 @@ the round-trip.
 **5. Future-state note (obsolete).** ~~When the slug-based upsert
 ships in the draft submitter (qnt-046), Phase 0.3 step e
 becomes redundant — the upsert overwrites the same doc, the new
-payload doesn't carry `review_state`, and the flag is cleared as a
+payload resets `status` to `draft`, and the flag is cleared as a
 side effect of the overwrite.~~ Superseded: step e now deletes the
 original outright after a confirmed submit, so the duplicate-doc
 problem the upsert was meant to solve does not arise. qnt-046 is no
