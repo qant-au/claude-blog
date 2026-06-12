@@ -8,7 +8,7 @@ the per-brand queues.
 
 Row shape (every row is a `status == "approved"` article):
     {brand_slug, draft_id, draft_path, slug, title, author_slug,
-     category, kind, status, hero_image_url, word_count}
+     category, kind, status, hero_image_url, word_count, created_at}
 
 ``kind`` is coerced to "spoke" when absent — legacy drafts predate the
 field, and a missing kind is, by definition, not a perspective/pillar.
@@ -49,6 +49,9 @@ def _row(brand_slug: str, article: dict) -> dict:
         "status":         article.get("status") or "approved",
         "hero_image_url": article.get("hero_image_url") or "",
         "word_count":     len(body.split()) if body else 0,
+        # createdAt (ISO/None) lets the publish skill process the queue
+        # oldest-first so the launch batch fills in submission order.
+        "created_at":     article.get("created_at"),
     }
 
 

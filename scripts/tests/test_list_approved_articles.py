@@ -29,6 +29,7 @@ def _article(**over):
         "author": {"slug": "adam-burgess", "name": "Adam Burgess"},
         "hero_image_url": "https://cdn/x.webp",
         "body_markdown": "one two three",
+        "created_at": "2026-06-11T00:00:00Z",
         "metadata": {},
     }
     d.update(over)
@@ -52,6 +53,7 @@ def test_rows_hit_the_approved_endpoint_and_carry_kind():
     assert row["status"] == "approved"
     assert row["hero_image_url"] == "https://cdn/x.webp"
     assert row["word_count"] == 3
+    assert row["created_at"] == "2026-06-11T00:00:00Z"
 
 
 def test_kind_defaults_to_spoke_for_legacy_drafts():
