@@ -237,6 +237,10 @@ Select the appropriate content template from the 12 templates in
 
 See `skills/blog/references/content-templates.md` for detailed selection criteria and intent mapping.
 
+The selected template also determines the article's **`kind`** (`perspective` /
+`pillar` / `spoke`) — stamped into the submission payload in Phase 7.5 and read
+by `/blog publish` to route + schedule the article. See the Phase 7.5 map.
+
 ### Phase 2: Research
 
 Spawn a `blog-researcher` agent (or do inline research with WebSearch):
@@ -716,6 +720,7 @@ in Phase 0.5, ship the draft to the brand's instance.
      "title": "<frontmatter title>",
      "slug": "<frontmatter slug or derived from title>",
      "category": "<from frontmatter — MUST be one of brand_identity.content.categories>",
+     "kind": "<site content kind — derived from the Phase 1.5 template, see map below>",
      "target_keyword": "<primary keyword>",
      "hero_image_url": "<frontmatter coverImage / ogImage>",
      "og": { "title": "...", "description": "...", "image": "..." },
@@ -724,6 +729,21 @@ in Phase 0.5, ship the draft to the brand's instance.
      "metadata": { /* word count, reading time, tags, source list, canonical */ }
    }
    ```
+
+   **`kind`** classifies the article for `/blog publish` (which route it
+   lands on and which cadence slot it takes). Derive it from the template
+   selected in Phase 1.5 — the template already encodes the intent, so no
+   extra flag is needed:
+
+   | Phase 1.5 template | `kind` |
+   |--------------------|--------|
+   | `thought-leadership` | `perspective` |
+   | `pillar-page` | `pillar` |
+   | any other template (or no template matched) | `spoke` |
+
+   `kind` flows through `submit_draft.py` unchanged (it is not in the
+   strip-list) and is stored on the draft. Legacy drafts written before
+   this field default to `spoke` at publish time.
 
    `submit_draft.py` will:
    - Strip any leaked `author` / `brand_slug` / `contentType` keys from
