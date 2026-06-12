@@ -72,7 +72,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <meta name="twitter:title" content="{title_escaped}">
 <meta name="twitter:description" content="{description_escaped}">
 <meta name="twitter:image" content="{og_image}">
-<script type="application/ld+json">{json_ld}</script>
+<script type="application/ld+json">{json_ld}</script>{breadcrumb_script}
 <style>{css}</style>
 </head>
 <body>
@@ -81,7 +81,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <p class="kicker">{kicker_escaped}</p>
 <h1>{title_escaped}</h1>
 <p class="dek">{description_escaped}</p>
-<p class="byline"><strong>By {author_escaped}</strong> &middot; {published_human} &middot; {reading_time_min} min read &middot; {word_count} words</p>
+<p class="byline"><strong>By {author_escaped}</strong>{author_byline_part} &middot; {published_human} &middot; {reading_time_min} min read &middot; {word_count} words</p>
 </header>
 <figure class="hero"><img src="{hero_filename}" alt="{og_image_alt_escaped}" width="1200" height="630"></figure>
 {body_html}
@@ -290,19 +290,56 @@ def _build_json_ld(fm: dict, word_count: int, og_image_url: str) -> str:
         "image": og_image_url,
         "datePublished": fm.get("date", ""),
         "dateModified": fm.get("date", ""),
-        "author": {"@type": "Person", "name": fm.get("author", "")},
+        "author": (
+            {"@type": "Person", "name": fm.get("author", ""), "jobTitle": fm["authorByline"]}
+            if fm.get("authorByline")
+            else {"@type": "Person", "name": fm.get("author", "")}
+        ),
         "wordCount": word_count,
         "keywords": ", ".join(fm.get("tags", [])) if isinstance(fm.get("tags"), list) else fm.get("tags", ""),
         "inLanguage": fm.get("lang", "en"),
     }
     if fm.get("canonical"):
         data["mainEntityOfPage"] = {"@type": "WebPage", "@id": fm["canonical"]}
+    if fm.get("publisher"):
+        data["publisher"] = {"@type": "Organization", "name": fm["publisher"]}
     # HTML-safe JSON encoding: escape "</" as "<\/" so an attacker who controls
     # a frontmatter value (e.g. title) cannot inject a literal "</script>" that
     # would break out of the surrounding <script type="application/ld+json">
     # block and execute arbitrary JS. "\/" is a valid JSON escape for "/",
     # so the embedded JSON remains semantically identical for any parser.
     return json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+
+
+def _build_breadcrumb_script(fm: dict) -> str:
+    """Second JSON-LD block (own <script> tag — the preflight gates expect the
+    BlogPosting block to stand alone). Derived from the canonical URL path."""
+    canonical = fm.get("canonical", "")
+    if not canonical.startswith("http"):
+        return ""
+    parts = canonical.split("/")
+    site_root = "/".join(parts[:3])
+    segments = [s for s in parts[3:] if s]
+    if not segments:
+        return ""
+    items = [{"@type": "ListItem", "position": 1, "name": "Home", "item": site_root}]
+    url = site_root
+    for i, seg in enumerate(segments):
+        url = f"{url}/{seg}"
+        is_last = i == len(segments) - 1
+        items.append({
+            "@type": "ListItem",
+            "position": i + 2,
+            "name": fm.get("title", seg) if is_last else seg.replace("-", " ").title(),
+            "item": url,
+        })
+    data = {
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": items,
+    }
+    encoded = json.dumps(data, ensure_ascii=False).replace("</", "<\\/")
+    return f'\n<script type="application/ld+json">{encoded}</script>'
 
 
 def _read_md_safely(path: Path) -> str:
@@ -409,6 +446,9 @@ def _render_html(md_path: Path, out_dir: Path, hero_filename: str) -> Path:
         description_escaped=html_lib.escape(fm.get("description", "")),
         canonical_tag=f'<link rel="canonical" href="{html_lib.escape(canonical)}">' if canonical else "",
         author_escaped=html_lib.escape(fm.get("author", "Anonymous")),
+        author_byline_part=(
+            f" &middot; {html_lib.escape(fm['authorByline'])}" if fm.get("authorByline") else ""
+        ),
         og_url_tag=f'<meta property="og:url" content="{html_lib.escape(canonical)}">' if canonical else "",
         og_image=html_lib.escape(og_image),
         og_image_alt_escaped=html_lib.escape(fm.get("og_image_alt", title)),
@@ -422,6 +462,7 @@ def _render_html(md_path: Path, out_dir: Path, hero_filename: str) -> Path:
         body_html=body_html,
         site_url_or_dash=html_lib.escape(site_url or "#"),
         json_ld=_build_json_ld(fm, word_count, og_image),
+        breadcrumb_script=_build_breadcrumb_script(fm),
         css=CSS,
     )
 
