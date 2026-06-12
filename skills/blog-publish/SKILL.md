@@ -44,6 +44,14 @@ brand website — and the subsequent deletion of the DB row.
    `docs/blog/publish-cadence.json`, never from the strategy prose docs.
 5. **ISO dates only.** Every `date` written to a registry is `YYYY-MM-DD`
    (the brand prebuild + IndexNow tooling enforce this shape).
+6. **Cross-links resolve and are date-compatible.** Every internal `/improve`
+   link must use the right route for the target's kind (perspective →
+   `/improve/perspective/<slug>`, article → `/improve/<slug>`, microanswer →
+   `/improve/m/<slug>`) and point at content that goes live **no later than**
+   the linking piece — a link to a future-dated article 404s while the linker
+   is already live. The brand validators enforce both (Phase 3.5); never weaken
+   them. External (off-brand) links are opened in a new tab by the brand's
+   article renderer — author plain `[text](url)`, do not hand-add `target`.
 
 ## Scripts this skill uses
 
@@ -175,6 +183,28 @@ syndication-eligibility key). Append to `BLOG_ARTICLES` in
 The adamburgess blog display isn't built yet — this is a **repo-only** write,
 no validation/Playwright there. (For a non-perspective Adam piece, point
 `canonicalUrl` at `/improve/<slug>` instead.)
+
+## Phase 3.5 — Content validation gate (before commit)
+
+The new registry entry + markdown must pass the brand's prebuild content
+validators **before anything is committed**. From the brand dir:
+
+```bash
+cd /Users/adam/Projects/qant/brands/redbridgecyber
+node scripts/build-lastmod.mjs \
+  && node scripts/validate-content-schedule.mjs \
+  && node scripts/validate-content-links.mjs
+```
+
+- `validate-content-schedule.mjs` — pillar↔trail coordination + 2/weekday slots.
+- `validate-content-links.mjs` — every internal `/improve` link resolves to the
+  right route for the target's kind and is date-compatible. A perspective linked
+  at `/improve/<slug>` instead of `/improve/perspective/<slug>`, a dead slug, or
+  a link to a not-yet-live (future-dated) article all fail the build.
+
+If any validator exits non-zero, **STOP** for that article: do not commit, keep
+the DB row, report it as failed-not-published with the validator output. (Brands
+without these scripts yet: run `npm run build` — the same gates run in prebuild.)
 
 ## Phase 4 — Commit + confirm
 
