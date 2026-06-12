@@ -369,11 +369,12 @@ For text inside colored elements: `fill="white"` with `fontWeight="800"`.
 
 ### Embedding Charts
 
-**Standard HTML:**
+**Standard HTML** — `blog-chart` returns a complete `<figure>` with the source
+already baked inside the SVG; embed it as-is. Do **not** add a `<figcaption>`
+source (it would duplicate the in-SVG source line):
 ```html
 <figure>
   <svg viewBox="0 0 560 380" ...>...</svg>
-  <figcaption>Source: Source Name, Year</figcaption>
 </figure>
 ```
 

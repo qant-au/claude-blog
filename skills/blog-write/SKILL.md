@@ -577,11 +577,12 @@ MDX with Next.js Image (if detected):
 
 #### 5j. Chart Embedding
 
-Standard markdown/HTML:
+Standard markdown/HTML — `blog-chart` returns a complete `<figure>` with the
+source already baked inside the SVG; embed it as-is. Do **not** add a
+`<figcaption>` source (it would duplicate the in-SVG source line):
 ```html
 <figure>
   <svg viewBox="0 0 560 380" ...>...</svg>
-  <figcaption>Source: [Source Name], [Year]</figcaption>
 </figure>
 ```
 

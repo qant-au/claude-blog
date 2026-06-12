@@ -212,7 +212,10 @@ Best for: multi-dimensional scoring (5-7 axes).
 
 ## Output Format
 
-Wrap every chart in a `<figure>` element:
+Wrap every chart in a `<figure>` element. The source attribution lives
+**inside the SVG** (the `<text>` line at the bottom), and the returned `<figure>`
+is complete — downstream embedding must use it as-is and must **not** add a
+`<figcaption>` source, or the source renders twice.
 
 **HTML:**
 ```html
