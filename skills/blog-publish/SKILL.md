@@ -159,30 +159,59 @@ literal shape. Field mapping:
 curator choice — the `/research` card links the first one). The consumer
 (`app/research/page.tsx`) already links `/improve/perspective/<slug>`.
 
-**3f. Mirror person-authored pieces to adamburgess.** Only when
-`author.slug !== 'red-bridge-cyber-team'` (Adam's pieces — the
-syndication-eligibility key). Append to `BLOG_ARTICLES` in
-`brands/adamburgess/lib/blog/articles.ts`:
+**3f. Mirror person-authored pieces to adamburgess (full-text republish).**
+Only when `author.slug !== 'red-bridge-cyber-team'` (Adam's pieces — the
+syndication-eligibility key). adamburgess.me/blog republishes the **full text**
+with canonical pointing back to the source (noindex,follow); its loader
+(`brands/adamburgess/lib/blog/load.ts`) reads frontmatter markdown under
+`content/blog/**`. Write a markdown file — **not** a registry entry:
 
-```ts
-{
-  slug: '<slug>',
-  title: '<title>',
-  excerpt: '<excerpt, ≤240 chars>',
-  category: 'cybersecurity',         // all redbridgecyber pieces aggregate here
-  date: '<assigned date>',
-  readTime: <readTime>,
-  source: {
-    name: 'Red Bridge Cyber',
-    slug: 'redbridgecyber',
-    canonicalUrl: 'https://redbridgecyber.com.au/improve/perspective/<slug>',
-  },
-},
+Path: `brands/adamburgess/content/blog/redbridgecyber-perspectives/<slug>.md`
+
+```md
+---
+title: "<title>"
+slug: <slug>
+excerpt: "<excerpt, ≤240 chars>"
+date: <assigned date>
+status: published
+category: cybersecurity
+categoryName: "Cybersecurity"
+group: "Red Bridge Cyber - Perspectives"
+author: "Adam Burgess"
+readTime: <readTime>
+heroImage: "<"/blog/<slug>/hero.<ext>" if a hero was copied, else "">"
+heroAlt: "<alt text, or "">"
+source:
+  name: "Red Bridge Cyber"
+  slug: redbridgecyber
+  canonicalUrl: "https://redbridgecyber.com.au/improve/perspective/<slug>"
+---
+
+<full body>
 ```
 
-The adamburgess blog display isn't built yet — this is a **repo-only** write,
-no validation/Playwright there. (For a non-perspective Adam piece, point
-`canonicalUrl` at `/improve/<slug>` instead.)
+Body assembly:
+- **Opening** = the `citabilityBlock` rendered as markdown (plain string → a
+  paragraph; `{intro,bullets,outro}` → intro paragraph, `- ` bullets, outro),
+  then a blank line, then `body_markdown`. The RBC body starts *after* the
+  citabilityBlock, so prepending it reconstructs the full article.
+- **Absolutize internal links**: `](/x)` → `](https://redbridgecyber.com.au/x)`
+  and `href="/x"` → the absolute RBC URL (skip already-local `/blog/` paths).
+- **Copy in-body images**: any `/blog-assets/...` reference → copy into
+  `brands/adamburgess/public/blog/<slug>/<filename>` and rewrite the src to
+  `/blog/<slug>/<filename>`.
+- **Strip GEO annotations**: remove `<!-- [UNIQUE INSIGHT] -->`,
+  `<!-- [PERSONAL EXPERIENCE] -->`, `<!-- [ORIGINAL DATA] -->`, etc.
+- **Hero**: if a hero was written to the brand site
+  (`public/blog-assets/<slug>.<ext>`), copy it to
+  `brands/adamburgess/public/blog/<slug>/hero.<ext>` and set `heroImage`.
+
+This is a repo-only write (the adamburgess loader renders it; no Playwright
+there). `brands/adamburgess/scripts/import-redbridgecyber-perspectives.mjs`
+performs exactly this transform for a backfill and is the reference
+implementation. (For a non-perspective Adam piece, point `canonicalUrl` at
+`/improve/<slug>` and group it under that source instead.)
 
 ## Phase 3.5 — Content validation gate (before commit)
 
@@ -221,7 +250,7 @@ If Adam-authored, commit the mirror too:
 
 ```bash
 cd /Users/adam/Projects/qant/brands/adamburgess
-git add lib/blog/articles.ts
+git add content/blog/redbridgecyber-perspectives/<slug>.md public/blog/<slug>/
 git commit -m "blog: mirror <slug> from Red Bridge Cyber"
 ```
 
