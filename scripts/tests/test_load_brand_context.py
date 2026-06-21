@@ -128,6 +128,35 @@ def test_staging_env_file_is_never_read(tmp_path: Path):
     assert ctx["brand_domain"] == "acme.example.com"
 
 
+def test_yaml_list_items_strip_inline_comments(tmp_path: Path):
+    """Inline `# comment` after a whitespace must be stripped from list items
+    (categories + target_keywords) — matching the scalar parser, so a brand
+    can annotate its .brand-seo.yml without polluting the parsed values."""
+    mod = _import_helper()
+    seo = (
+        "brand: acme\n"
+        "display_name: Acme\n"
+        "target_keywords:\n"
+        "  - sleep meditation   # 27,100/KD11\n"
+        "  - morning ritual     # rising +410%\n"
+        "content:\n"
+        "  url_pattern: /post/{slug}\n"
+        "  default_author: house\n"
+        "  categories:\n"
+        "    - sleep        # \"Sleep & rest\" hub -> Deep Rest\n"
+        "    - stillness    # \"Morning\" hub\n"
+    )
+    _make_brand(
+        tmp_path, "acme",
+        env_files={".env.prod": "NEXT_PUBLIC_BRAND_DOMAIN=acme.example\n"},
+        seo_yml=seo,
+    )
+    ctx = mod.load_brand_context("acme", brands_root=tmp_path)
+    ident = ctx["brand_identity"]
+    assert ident["target_keywords"] == ["sleep meditation", "morning ritual"]
+    assert ident["content"]["categories"] == ["sleep", "stillness"]
+
+
 def test_missing_env_file_is_soft(tmp_path: Path):
     """No env file is a soft miss — brand_domain falls back to the YAML's
     canonical.marketing host."""

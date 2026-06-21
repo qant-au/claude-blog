@@ -186,6 +186,9 @@ def _parse_brand_seo_yml(path: Path) -> dict[str, Any]:
                         bl_stripped = bl.strip()
                         if bl_stripped.startswith("- "):
                             kw = bl_stripped[2:].strip()
+                            # Strip an inline `# comment` on unquoted values.
+                            if kw and kw[0] not in {'"', "'"} and " #" in kw:
+                                kw = kw.split(" #", 1)[0].rstrip()
                             if len(kw) >= 2 and kw[0] == kw[-1] and kw[0] in {'"', "'"}:
                                 kw = kw[1:-1]
                             if kw:
@@ -208,6 +211,9 @@ def _parse_brand_seo_yml(path: Path) -> dict[str, Any]:
                         if bl.lstrip().startswith("- "):
                             if current_list_key:
                                 v = bl.lstrip()[2:].strip()
+                                # Strip an inline `# comment` on unquoted values.
+                                if v and v[0] not in {'"', "'"} and " #" in v:
+                                    v = v.split(" #", 1)[0].rstrip()
                                 if len(v) >= 2 and v[0] == v[-1] and v[0] in {'"', "'"}:
                                     v = v[1:-1]
                                 if v:
