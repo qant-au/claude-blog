@@ -168,3 +168,62 @@ def test_no_double_booking_within_one_run():
     out = mod.compute_schedule(CADENCE, [], approved)
     dates = [r["date"] for r in out if r["action"] == "schedule"]
     assert len(dates) == len(set(dates)), "no two articles share a slot in one run"
+
+
+# ── Markdown-frontmatter brands (elliejames) ──────────────────────────────────
+
+EJ_CADENCE = {
+    "brand_slug": "elliejames",
+    "default_author": "ellie-james",
+    "launch_date": "2026-06-22",  # Monday
+    "rules": [
+        {"author_slug": "ellie-james", "kind": "spoke",
+         "weekdays": [0], "interval_weeks": 1},  # weekly Mondays
+    ],
+}
+
+
+def test_parse_markdown_articles_reads_frontmatter(tmp_path):
+    blog = tmp_path / "content" / "blog"
+    blog.mkdir(parents=True)
+    (blog / "first.md").write_text(
+        "---\n"
+        "title: First Post\n"
+        "slug: first-post\n"
+        "excerpt: >-\n"
+        "  a folded block scalar that must not be parsed as a key: value trap\n"
+        "date: '2026-03-15'\n"
+        "author: Ellie James\n"
+        "---\n\n# Body\n",
+        encoding="utf-8",
+    )
+    (blog / "second.md").write_text(
+        "---\nslug: second\ndate: 2026-05-03\nkind: pillar\nauthor_slug: someone-else\n---\nbody\n",
+        encoding="utf-8",
+    )
+    got = {e["slug"]: e for e in mod.parse_markdown_articles(blog, "ellie-james")}
+    assert got["first-post"]["date"] == "2026-03-15"
+    assert got["first-post"]["kind"] == "spoke"            # default
+    assert got["first-post"]["author"] == "ellie-james"    # display-name author → default slug
+    assert got["second"]["kind"] == "pillar"               # explicit
+    assert got["second"]["author"] == "someone-else"       # explicit author_slug honoured
+
+
+def test_markdown_brand_schedules_forward_from_launch_not_past():
+    """An established markdown brand resuming after a gap: existing posts are
+    months in the past, but the next post must land on/after launch_date —
+    never back-dated onto an old open Monday."""
+    existing = [
+        {"slug": "old-a", "kind": "spoke", "author": "ellie-james", "date": "2026-03-15"},
+        {"slug": "old-b", "kind": "spoke", "author": "ellie-james", "date": "2026-05-03"},
+    ]
+    out = mod.compute_schedule(EJ_CADENCE, existing, [_approved("new", "spoke", "ellie-james")])
+    assert out[0]["action"] == "schedule"
+    assert out[0]["date"] == "2026-06-22"  # first Monday >= launch_date, not a 2026-05 slot
+
+
+def test_markdown_brand_idempotent_skip_by_slug():
+    existing = [{"slug": "live", "kind": "spoke", "author": "ellie-james", "date": "2026-06-22"}]
+    out = mod.compute_schedule(EJ_CADENCE, existing, [_approved("live", "spoke", "ellie-james")])
+    assert out[0]["action"] == "skip"
+    assert out[0]["date"] is None

@@ -64,9 +64,20 @@ All under `scripts/` in this plugin:
 | `qant_api.py` (`request()` inline) | Fetch full article body + hero image; called directly. |
 | `delete_inbox_draft.py --brand-slug <slug> --draft-id <id> --reason "..."` | The single destructive call — delete after both gates pass. |
 
-Currently only **redbridgecyber** is a live publish target. The site-write
-step (Phase 3) is brand-specific; this skill documents redbridgecyber. New
-brands add their own Phase 3 mapping.
+The site-write step (Phase 3) is **brand-specific** because brands store
+content differently. Two systems are wired:
+
+- **redbridgecyber** — a TS registry (`lib/content/articles.ts`) holds the
+  metadata + a separate markdown body file. See *Phase 3 — redbridgecyber*.
+- **elliejames** — frontmatter markdown only: each post is one self-contained
+  `content/blog/<slug>.md` (frontmatter + body), read at build by
+  `lib/blog/load.ts`. No TS registry, no adamburgess mirror. See *Phase 3 —
+  elliejames*.
+
+The scheduler (`compute_publish_dates.py`) already abstracts the occupied-date
+source over both systems (registry vs. markdown corpus), so Phases 0–2 are
+brand-agnostic; only the Phase 3 write differs. New brands add their own
+Phase 3 subsection.
 
 ---
 
@@ -95,8 +106,11 @@ Otherwise announce the count and continue. Sort the rows oldest-first by
 Resolve the brand directory (the env/brand resolver in `qant_api.py` uses
 `/Users/adam/Projects/qant/brands/<slug>/`). Read:
 - `brands/<slug>/docs/blog/publish-cadence.json` — the cadence config.
-- `brands/<slug>/lib/content/articles.ts` — the existing registry (for
-  occupied dates + idempotency).
+- The existing occupied dates (for scheduling + idempotency). The scheduler
+  reads these itself: `lib/content/articles.ts` for registry brands
+  (redbridgecyber), or the `content/blog/**.md` frontmatter for markdown
+  brands (elliejames). You do not pass them in — `compute_publish_dates.py`
+  picks the right source from the brand directory.
 
 ## Phase 2 — Schedule
 
@@ -213,7 +227,99 @@ performs exactly this transform for a backfill and is the reference
 implementation. (For a non-perspective Adam piece, point `canonicalUrl` at
 `/improve/<slug>` and group it under that source instead.)
 
-## Phase 3.5 — Content validation gate (before commit)
+## Phase 3 — Write the article onto the brand site (elliejames)
+
+elliejames has **no TS registry and no adamburgess mirror** — each post is one
+self-contained frontmatter markdown file that `lib/blog/load.ts` reads at
+build. Per `action: "schedule"` row, in date order:
+
+**3a. Fetch the full article + hero image** — identical to redbridgecyber 3a
+(`GET /brand/blog/articles/{draft_id}` + `…/image`, via `qant_api.request`).
+
+**3b. Write one complete markdown file** to
+`brands/elliejames/content/blog/<slug>.md`. Unlike redbridgecyber (pure body +
+separate registry), the **frontmatter lives in this file** — the loader parses
+it. Shape (match an existing post, e.g. `content/blog/what-do-you-actually-want.md`):
+
+```md
+---
+title: <DB title>
+slug: <slug>
+excerpt: >-
+  <DB og.description, else the answer-first opening sentence; ≤ ~240 chars>
+pillar: <one of: sleep | stillness | presence | intention | ritual | inner-life>
+date: '<scheduler-assigned YYYY-MM-DD>'
+status: published
+author: Ellie James
+readTime: <round(word_count / 200), min 1>
+metaDescription: >-
+  <DB og.description or excerpt>
+heroImage: /blog/<slug>/cover.png      # omit if no hero was returned
+heroAlt: <DB hero alt, if any>
+---
+
+<body_markdown>
+```
+
+- `pillar` **must** be one of the six pillar ids (`lib/blog/categories.ts`).
+  Map the DB `category` to a pillar id; if the draft's category is already a
+  pillar id use it directly, else pick the closest pillar (the loader's
+  `pillarFromCategoryName` is the fallback the site uses).
+- `date` is the scheduler's assigned date, single-quoted (YAML would otherwise
+  coerce it to a timestamp). ISO `YYYY-MM-DD` only.
+- `author` is the **display name** `Ellie James` (the loader renders this as
+  the byline), not the `ellie-james` slug.
+
+**3c. Write the hero image** (only if one was returned): decode the base64 to
+`brands/elliejames/public/blog/<slug>/cover.png` (`.png`/`.webp` from the
+mime) and set `heroImage: /blog/<slug>/cover.png`. No hero is valid — omit the
+`heroImage`/`heroAlt` lines and the page renders without one.
+
+**3d. No registry, no mirror.** The markdown file *is* the publication record;
+there is nothing else to edit.
+
+**3.5 Validate (before commit).** elliejames has no RBC-style content
+validators; the build is the gate. From the brand dir:
+
+```bash
+cd /Users/adam/Projects/qant/brands/elliejames
+npm run build      # prebuild (build-lastmod) + next build — fails on a bad date / unparseable frontmatter
+```
+
+If the build fails, **STOP** for that article: do not commit, keep the DB row,
+report it with the build output.
+
+**4. Commit + confirm.** One commit per article:
+
+```bash
+cd /Users/adam/Projects/qant/brands/elliejames
+git add content/blog/<slug>.md public/blog/<slug>/
+git commit -m "blog: publish <slug> (<pillar>, <date>)"
+```
+
+Confirm with `git log --oneline -1` (and exit code). A failed commit → STOP,
+keep the DB row, report as failed.
+
+**5. Playwright layout gate.** The container must be running so dev HMR has the
+new markdown (`./restart.sh` from the brand dir — `next dev` on port 4321, no
+rebuild needed).
+
+```bash
+# staging shows future-dated posts, so the URL is reachable pre-go-live
+curl -s -o /dev/null -w "%{http_code}" "http://localhost:4321/post/<slug>"   # expect 200
+cd /Users/adam/Projects/qant/brands/elliejames && npm run test:e2e
+```
+
+A `404` means the container isn't running / hasn't hot-reloaded — prompt the
+user to `./restart.sh` and retry; do **not** delete the DB row in that state.
+On a failed layout/e2e check, print the output, keep the DB row, report failed.
+
+Then proceed to **Phase 6** (delete from DB) — it is brand-agnostic.
+
+## Phase 3.5 — Content validation gate (before commit) — redbridgecyber
+
+(elliejames does its own validate/commit/gate inline in *Phase 3 —
+elliejames* above; the Phases below are the redbridgecyber registry flow.)
 
 The new registry entry + markdown must pass the brand's prebuild content
 validators **before anything is committed**. From the brand dir:
@@ -235,7 +341,7 @@ If any validator exits non-zero, **STOP** for that article: do not commit, keep
 the DB row, report it as failed-not-published with the validator output. (Brands
 without these scripts yet: run `npm run build` — the same gates run in prebuild.)
 
-## Phase 4 — Commit + confirm
+## Phase 4 — Commit + confirm — redbridgecyber
 
 Commit the brand-site changes (one commit per article keeps history clean):
 
@@ -258,7 +364,7 @@ git commit -m "blog: mirror <slug> from Red Bridge Cyber"
 `git commit` fails (e.g. nothing staged, hook rejects), **STOP** for that
 article — do not run Phase 5 or 6. Report it as failed.
 
-## Phase 5 — Playwright layout gate
+## Phase 5 — Playwright layout gate — redbridgecyber
 
 The article is committed but not yet verified. The redbridgecyber container
 must be running so dev HMR has the new `articles.ts` (`./restart.sh

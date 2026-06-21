@@ -7,8 +7,11 @@ open publish date for that (author, kind), honouring:
 
 * the per-brand cadence config (``brands/<slug>/docs/blog/publish-cadence.json``)
   — weekday(s), interval, and a launch-day batch;
-* the dates ALREADY occupied in the site registry
-  (``brands/<slug>/lib/content/articles.ts``) — so re-runs never double-book;
+* the dates ALREADY occupied on the brand site — so re-runs never double-book.
+  Two content systems are supported: a TS registry
+  (``brands/<slug>/lib/content/articles.ts``, e.g. redbridgecyber) or
+  frontmatter markdown (``brands/<slug>/content/blog/**.md``, e.g. elliejames).
+  The registry is used when it exists; otherwise the markdown corpus is read;
 * idempotency — an approved article whose slug is already in the registry is
   reported ``action: "skip"`` (already published, awaiting DB cleanup).
 
@@ -137,6 +140,64 @@ def parse_registry_articles(ts_text: str) -> list[dict]:
     return out
 
 
+def _frontmatter(md_text: str) -> dict[str, str]:
+    """Parse the leading `--- ... ---` YAML frontmatter as flat scalars.
+
+    Stdlib only (no PyYAML). Handles `key: value`, surrounding quotes, and
+    YAML block scalars (`>-` / `|`) by taking the key's value as empty — we
+    only read scalar keys (slug/date/kind/author_slug), never block bodies.
+    """
+    lines = md_text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return {}
+    out: dict[str, str] = {}
+    for raw in lines[1:]:
+        if raw.strip() == "---":
+            break
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if raw[0] in (" ", "\t") or ":" not in raw:  # nested / continuation — ignore
+            continue
+        key, _, value = raw.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if value and value[0] in (">", "|"):  # block scalar — value is on following lines
+            value = ""
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        if key:
+            out[key] = value
+    return out
+
+
+def parse_markdown_articles(content_dir: Path, default_author: str) -> list[dict]:
+    """Extract `{slug, kind, date, author}` from every frontmatter markdown
+    file under ``content_dir`` (recursively).
+
+    For markdown brands the post's `author` frontmatter is a display name, not
+    a slug, so occupancy is attributed to ``default_author`` (the brand's
+    single author slug) unless the file carries an explicit ``author_slug``.
+    ``kind`` defaults to ``spoke`` when absent (the /blog write default).
+    Files missing slug or date are skipped (drafts-in-progress, partials).
+    """
+    out: list[dict] = []
+    if not content_dir.is_dir():
+        return out
+    for md in sorted(content_dir.rglob("*.md")):
+        fm = _frontmatter(md.read_text(encoding="utf-8"))
+        slug = fm.get("slug") or md.stem
+        edate = (fm.get("date") or "")[:10]
+        if not slug or not edate:
+            continue
+        out.append({
+            "slug":   slug,
+            "kind":   fm.get("kind") or "spoke",
+            "date":   edate,
+            "author": fm.get("author_slug") or default_author,
+        })
+    return out
+
+
 # ── Scheduling ───────────────────────────────────────────────────────────────
 
 def find_rule(cadence: dict, author_slug: str, kind: str) -> dict | None:
@@ -160,6 +221,7 @@ def _next_slot(rule: dict, occupied: set[date], launch: date) -> date:
     for _ in range(_HORIZON_DAYS):
         if (candidate.weekday() in weekdays
                 and candidate not in occupied
+                and candidate >= launch  # never schedule before launch_date
                 and (candidate - anchor).days >= min_gap):
             return candidate
         candidate += timedelta(days=1)
@@ -229,13 +291,21 @@ def compute_schedule(cadence: dict, existing: list[dict], approved: list[dict]) 
 # ── CLI ──────────────────────────────────────────────────────────────────────
 
 def _load(brand_slug: str, cadence_path: Path | None, ts_path: Path | None,
-          brands_root: Path) -> tuple[dict, str]:
+          brands_root: Path) -> tuple[dict, list[dict]]:
+    """Return (cadence, existing) where ``existing`` is the brand's already-
+    occupied articles. Source is the TS registry when present (or forced via
+    ``--articles-ts``), else the frontmatter-markdown corpus."""
     brand_dir = brands_root / brand_slug
     cad = cadence_path or brand_dir / "docs" / "blog" / "publish-cadence.json"
-    ts = ts_path or brand_dir / "lib" / "content" / "articles.ts"
     cadence = json.loads(cad.read_text(encoding="utf-8"))
-    ts_text = ts.read_text(encoding="utf-8")
-    return cadence, ts_text
+    default_author = cadence.get("default_author") or DEFAULT_AUTHOR
+
+    ts = ts_path or brand_dir / "lib" / "content" / "articles.ts"
+    if ts.exists():
+        return cadence, parse_registry_articles(ts.read_text(encoding="utf-8"))
+
+    content_dir = brand_dir / "content" / "blog"
+    return cadence, parse_markdown_articles(content_dir, default_author)
 
 
 def main() -> int:
@@ -259,12 +329,11 @@ def main() -> int:
         return 2
 
     try:
-        cadence, ts_text = _load(args.brand_slug, args.cadence, args.articles_ts, args.brands_root)
+        cadence, existing = _load(args.brand_slug, args.cadence, args.articles_ts, args.brands_root)
     except (OSError, ValueError) as e:
         sys.stderr.write(f"error: {e}\n")
         return 1
 
-    existing = parse_registry_articles(ts_text)
     try:
         results = compute_schedule(cadence, existing, approved)
     except RuntimeError as e:
