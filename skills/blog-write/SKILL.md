@@ -40,7 +40,7 @@ parent `blog/SKILL.md` "Per-brand and per-author flags" section:
 | `--author <slug>` (optional) | Phase 0.6 reads the author via the brand-blog API (`GET /brand/blog/authors/{slug}`, managed in Axiom: Instances → Brands → Authors); Phase 0.6 fetches the full doc with `--get-author`. The author doc carries `name`, `byline`, `bio`, `writing_style`, plus structured-voice fields (`locale`, `pronoun_stance`, `register`, `banned_phrases`, `signature_moves`, `target_audience`). The on-disk `brands/<slug>/authors/<slug>/` bundles were retired in Phase F-post. **If omitted, Phase 0.6 prompts the user with the author list from `--list-authors --brand <slug>`, highlighting `content.default_author`.** |
 | `--no-submit` | Skips Phase 7.5 entirely (article ends up local-only). |
 
-Note: there is no `--staging` / `--development` flag anymore. Drafts always go to the brand's instance via the brand-key API regardless of which env the contributor's brand site happens to be wired to. The loader reads `.env`, `.env.stg`, `.env.dev` in precedence order — first existing file wins — to pick up `NEXT_PUBLIC_BRAND_DOMAIN`, `NEXT_PUBLIC_BRAND_KEY` (the `brk_` key), and `NEXT_PUBLIC_BRAND_ENV` (stg/dev → `https://api-stg.qant.au`, otherwise `https://api.qant.au`; `QANT_BLOG_API_URL` overrides — resolution lives in `scripts/qant_api.py`).
+Note: there is no `--staging` / `--development` flag. The `/blog` skill is **production-only** — drafts and authors always go to the production AU brand-blog API (`https://api-au.qant.au`, backed by `qant-core-au`). The loader reads `.env.prod`, then `.env` (first existing file wins; staging env files are never read) to pick up `NEXT_PUBLIC_BRAND_DOMAIN` and `NEXT_PUBLIC_BRAND_KEY` (the production `brk_` key). `QANT_BLOG_API_URL` overrides the base for local API development only — resolution lives in `scripts/qant_api.py`.
 
 ## Workflow
 
@@ -765,12 +765,12 @@ in Phase 0.5, ship the draft to the brand's instance.
 
 3. **Submit** — POSTs to the QANT brand-blog API
    (`POST /brand/blog/articles`, `X-Brand-Key` header). Auth is the
-   brand's own key: `NEXT_PUBLIC_BRAND_KEY` (a `brk_` key) read from
-   `/Users/adam/Projects/qant/brands/<slug>/.env` → `.env.stg` →
-   `.env.dev` (first existing file wins). The API base derives from
-   `NEXT_PUBLIC_BRAND_ENV` (stg/dev → `https://api-stg.qant.au`,
-   otherwise `https://api.qant.au`); the `QANT_BLOG_API_URL` env var
-   overrides it. Resolution lives in `scripts/qant_api.py` — no
+   brand's own key: `NEXT_PUBLIC_BRAND_KEY` (the production `brk_` key)
+   read from `/Users/adam/Projects/qant/brands/<slug>/.env.prod` → `.env`
+   (first existing file wins; staging env files are never read). The API
+   base is the production AU host `https://api-au.qant.au` (backed by
+   `qant-core-au`); the `QANT_BLOG_API_URL` env var overrides it for local
+   API development only. Resolution lives in `scripts/qant_api.py` — no
    service-account keys, no env-var setup in the contributor's shell.
 
    ```bash

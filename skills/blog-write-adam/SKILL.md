@@ -74,10 +74,10 @@ Expands to:
     --author adam-burgess --brand redbridgecyber
 ```
 
-End-to-end: brand context loaded via the env-precedence pick (`.env` →
-`.env.stg` → `.env.dev`), Adam's author record read via the brand-blog
-API (`GET /brand/blog/authors/adam-burgess` with redbridgecyber's
-`brk_` key), article drafted in Adam's voice (using the author doc's
+End-to-end: brand context loaded via the env-precedence pick (`.env.prod` →
+`.env`, production-only), Adam's author record read via the production AU
+brand-blog API (`GET /brand/blog/authors/adam-burgess` with redbridgecyber's
+production `brk_` key), article drafted in Adam's voice (using the author doc's
 `writing_style` + structured-voice fields), FLOW review run, draft
 submitted to redbridgecyber's instance via `submit_draft.py`
 (`POST /brand/blog/articles`, brand-key auth — no service-account

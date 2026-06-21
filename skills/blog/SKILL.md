@@ -84,20 +84,20 @@ to the sub-skill as part of command routing:
 | `--from-queue` (rewrite only, v1.9.2) | unset | Queue mode for `/blog rewrite`. Reads every article flagged with `status == "rewrite"` (via `GET /brand/blog/rewrites` with each brand's key) and rewrites each in sequence, clearing the flag on success. With `--brand <slug>`, scoped to that brand; with `--all-brands` (or no `--brand`), enumerates every brand. Skips the positional `<file-path>` argument. See `skills/blog-rewrite/SKILL.md` Phase 0.3. |
 | `--all-brands` (rewrite only, v1.10) | unset | Multi-brand queue mode. Implies `--from-queue`. **`/blog rewrite` with no arguments defaults to this** — the orchestrator passes `--from-queue --all-brands` straight through to `blog-rewrite` without prompting for brand or file path. |
 
-There is no `--staging` / `--development` flag. The submission path
-sends every draft to the brand's instance via the QANT brand-blog API
-regardless of environment. The brand-context loader reads `.env` →
-`.env.stg` → `.env.dev` in precedence order (first existing file wins)
-to pick up `NEXT_PUBLIC_BRAND_DOMAIN`, `NEXT_PUBLIC_BRAND_KEY`, and
-`NEXT_PUBLIC_BRAND_ENV`.
+There is no `--staging` / `--development` flag. The `/blog` skill is
+**production-only**: every draft, author read, and approved-draft
+retrieval goes to the production AU brand-blog API (`https://api-au.qant.au`,
+backed by `qant-core-au`). The brand-context loader reads `.env.prod` →
+`.env` in precedence order (first existing file wins; staging env files are
+never read) to pick up `NEXT_PUBLIC_BRAND_DOMAIN` and
+`NEXT_PUBLIC_BRAND_KEY`.
 
-Submission auth is the brand's own key: `NEXT_PUBLIC_BRAND_KEY` (a
-`brk_` key) from the brand dir's env file, sent as the `X-Brand-Key`
-header. The API base derives from `NEXT_PUBLIC_BRAND_ENV` (stg/dev →
-`https://api-stg.qant.au`, otherwise `https://api.qant.au`); the
-`QANT_BLOG_API_URL` env var overrides it. Resolution is implemented in
-`scripts/qant_api.py` — no service-account keys, no
-`QANT_BLOG_DRAFTS_*` env vars.
+Submission auth is the brand's own key: `NEXT_PUBLIC_BRAND_KEY` (the
+production `brk_` key) from the brand dir's `.env.prod`, sent as the
+`X-Brand-Key` header. The API base is `https://api-au.qant.au`; the
+`QANT_BLOG_API_URL` env var overrides it for local API development only.
+Resolution is implemented in `scripts/qant_api.py` — no service-account
+keys, no `QANT_BLOG_DRAFTS_*` env vars.
 
 Resolution order for `--brand`:
 1. Explicit `--brand <slug>` argument.

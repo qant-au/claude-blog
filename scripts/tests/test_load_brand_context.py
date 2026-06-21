@@ -94,19 +94,38 @@ def test_env_flags_are_retired():
         mod.load_brand_context("acme", development=True)
 
 
-def test_env_file_precedence_env_first(tmp_path: Path):
+def test_env_file_precedence_prod_first(tmp_path: Path):
+    """Production-only: ``.env.prod`` wins over ``.env``, and the staging
+    env file (``.env.stg``) is never read."""
     mod = _import_helper()
     _make_brand(
         tmp_path,
         "acme",
         env_files={
-            ".env":     "NEXT_PUBLIC_BRAND_DOMAIN=prod.example.com\n",
-            ".env.stg": "NEXT_PUBLIC_BRAND_DOMAIN=stg.example.com\n",
+            ".env.prod": "NEXT_PUBLIC_BRAND_DOMAIN=prod.example.com\n",
+            ".env":      "NEXT_PUBLIC_BRAND_DOMAIN=plain.example.com\n",
+            ".env.stg":  "NEXT_PUBLIC_BRAND_DOMAIN=stg.example.com\n",
         },
     )
     ctx = mod.load_brand_context("acme", brands_root=tmp_path)
-    assert ctx["env_file"].endswith("/.env")
+    assert ctx["env_file"].endswith("/.env.prod")
     assert ctx["brand_domain"] == "prod.example.com"
+
+
+def test_staging_env_file_is_never_read(tmp_path: Path):
+    """A brand with only a staging env file is treated as having no env
+    file (soft miss) — the skill is production-only."""
+    mod = _import_helper()
+    _make_brand(
+        tmp_path,
+        "acme",
+        env_files={".env.stg": "NEXT_PUBLIC_BRAND_DOMAIN=stg.example.com\n"},
+        seo_yml="brand: acme\ncanonical:\n  marketing: https://acme.example.com\n",
+    )
+    ctx = mod.load_brand_context("acme", brands_root=tmp_path)
+    assert ctx["env_file"] is None
+    # brand_domain falls back to the YAML canonical, NOT the staging env value.
+    assert ctx["brand_domain"] == "acme.example.com"
 
 
 def test_missing_env_file_is_soft(tmp_path: Path):

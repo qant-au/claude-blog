@@ -11,16 +11,16 @@ how the key + API base are resolved from the brand env file.
 Brand directories live at ``/Users/adam/Projects/qant/brands/<slug>/``.
 Each contains:
 
-* one of ``.env``, ``.env.stg``, ``.env.dev`` — simple KEY=VALUE env file.
+* one of ``.env.prod``, ``.env`` — simple KEY=VALUE env file.
 * ``.brand-seo.yml`` — brand identity (display name, hosts, content scope).
 
-Env file selection (E4.5 — flag removed)
+Env file selection (production-only)
 ────────────────────────────────────────
-Tries ``.env`` → ``.env.stg`` → ``.env.dev`` in order and uses the first
-existing file. The only field the loader cares about from env now is
-``NEXT_PUBLIC_BRAND_DOMAIN`` (the canonical brand hostname). Brands run
-on a single canonical domain regardless of which staging URL the team
-happens to be testing today.
+Tries ``.env.prod`` → ``.env`` in order and uses the first existing file
+(staging env files are never read — the /blog skill is production-only;
+see scripts/qant_api.py). The only field the loader cares about from env now
+is ``NEXT_PUBLIC_BRAND_DOMAIN`` (the canonical brand hostname). Brands run
+on a single canonical domain regardless of environment.
 
 ``.brand-seo.yml`` is parsed defensively with a minimal stdlib YAML reader
 (top-level scalars + ``canonical:`` map + ``target_keywords:`` list +
@@ -54,7 +54,7 @@ Usage:
 
 Exits non-zero on:
 * unknown brand slug (directory missing)
-* no env file present (loader expected ``.env`` / ``.env.stg`` / ``.env.dev``)
+* no env file present (loader expected ``.env.prod`` / ``.env``)
 """
 
 from __future__ import annotations
@@ -69,7 +69,8 @@ from typing import Any
 QANT_BRANDS_ROOT = Path("/Users/adam/Projects/qant/brands")
 
 # Tried in order; first existing file wins. Authoritative for the loader.
-ENV_FILE_PRECEDENCE: tuple[str, ...] = (".env", ".env.stg", ".env.dev")
+# Production-only: staging env files (.env.stg / .env.dev) are never read.
+ENV_FILE_PRECEDENCE: tuple[str, ...] = (".env.prod", ".env")
 
 
 def _parse_env_file(path: Path) -> dict[str, str]:

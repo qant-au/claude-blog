@@ -3,20 +3,24 @@
 
 The /blog skill's only data surface: every author read, draft submission,
 hero-image attach, rewrite-queue read, and post-rewrite cleanup goes over
-``https://api[-stg].qant.au/brand/blog/*`` authenticated with the brand's
-own key (``X-Brand-Key``). Direct Firestore access (the qant-blog-drafts
-project + service-account key) was retired 2026-06.
+``https://api-au.qant.au/brand/blog/*`` authenticated with the brand's own
+key (``X-Brand-Key``). Direct Firestore access (the qant-blog-drafts project
++ service-account key) was retired 2026-06.
+
+**Production-only (AU).** The skill targets the production AU API exclusively
+(backed by the ``qant-core-au`` Firestore project) — there is no automatic
+staging path. The brand key is read from the brand's ``.env.prod`` file (the
+production ``brk_`` key); staging env files are never consulted.
 
 Per-brand config comes from the brand directory's env file
-(``/Users/adam/Projects/qant/brands/<slug>/.env`` → ``.env.stg`` →
-``.env.dev``, first existing wins):
+(``/Users/adam/Projects/qant/brands/<slug>/.env.prod`` → ``.env``, first
+existing wins):
 
-* ``NEXT_PUBLIC_BRAND_KEY``  — the brk_ key (also used by the brand site)
-* ``NEXT_PUBLIC_BRAND_ENV``  — ``stg``/``dev`` → api-stg.qant.au,
-  anything else → api.qant.au
+* ``NEXT_PUBLIC_BRAND_KEY``  — the production brk_ key (also used by the
+  production brand site)
 
-``QANT_BLOG_API_URL`` (env var) overrides the derived API base when set —
-useful for local API testing.
+``QANT_BLOG_API_URL`` (env var) overrides the API base when set — for local
+API development only (e.g. a localhost API); it is NOT a staging switch.
 
 Stdlib only (urllib) — no requests/google-cloud deps.
 """
@@ -33,13 +37,12 @@ from typing import Any
 QANT_BRANDS_ROOT = Path("/Users/adam/Projects/qant/brands")
 
 # Tried in order; first existing file wins (matches load_brand_context.py).
-ENV_FILE_PRECEDENCE: tuple[str, ...] = (".env", ".env.stg", ".env.dev")
+# Production-only: read the prod env file (prod brk_ key); staging env files
+# (.env.stg / .env.dev) are intentionally never read.
+ENV_FILE_PRECEDENCE: tuple[str, ...] = (".env.prod", ".env")
 
-_API_URLS = {
-    "stg": "https://api-stg.qant.au",
-    "dev": "https://api-stg.qant.au",
-}
-_API_URL_PROD = "https://api.qant.au"
+# The /blog skill talks to production AU exclusively (qant-core-au).
+_API_URL_PROD = "https://api-au.qant.au"
 
 
 class ApiError(RuntimeError):
@@ -104,9 +107,8 @@ def brand_api_config(brand_slug: str, *, brands_root: Path | None = None) -> tup
             f"issue one in Axiom (Instances → Brands → {brand_slug} → Keys)."
         )
 
-    api_url = os.environ.get("QANT_BLOG_API_URL") or _API_URLS.get(
-        env.get("NEXT_PUBLIC_BRAND_ENV", ""), _API_URL_PROD,
-    )
+    # Production AU only; QANT_BLOG_API_URL overrides for local API dev only.
+    api_url = os.environ.get("QANT_BLOG_API_URL") or _API_URL_PROD
     return api_url.rstrip("/"), brand_key
 
 
