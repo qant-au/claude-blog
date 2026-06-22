@@ -172,3 +172,11 @@ After cutting a new release (git tag + `gh release create`), run:
 ```
 
 This generates a blog post on https://claude-blog.md/blog/, handles cover image generation, SEO metadata, FAQ schema, internal linking, sitemap/llms.txt updates, Vercel deployment, and Google indexing.
+
+## Port registry
+
+Every host port used anywhere under `/Users/adam/Projects` — **including this project's** — is recorded in one complete source of truth: [`/Users/adam/Projects/PORTS.md`](/Users/adam/Projects/PORTS.md).
+
+- **Need a port (new or changed)?** Open `PORTS.md`, find this project's reserved range in the legend, and take the lowest unused port in that range.
+- **After** adding/changing/removing any port binding (`docker-compose ports:`, `restart.sh`, dev `--port`): add/update the row in `PORTS.md` **in the same commit**.
+- **Validate:** `python3 /Users/adam/Projects/scripts/check-ports.py` (errors on unregistered ports and collisions).
