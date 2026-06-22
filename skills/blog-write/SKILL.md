@@ -666,9 +666,24 @@ Before delivering, verify:
 
 Before Phase 7, run the 5-gate delivery contract per `skills/blog/references/blog-delivery-contract.md`. The user is never the first reviewer; the gates are.
 
+> **Mandatory-hero brands (override — read first).** If the brand resolved
+> in Phase 0.5 sets `content.hero.required: true` in its `.brand-seo.yml`,
+> the hero is NOT optional. The article is incomplete until a hero is
+> generated AND attached (Phase 7.6), and **every "proceed without a hero" /
+> "never block on the image" fallback below (step 1b and Phase 7.6) is
+> OVERRIDDEN** — on exhausting retries, STOP and surface the failure rather
+> than reporting the article as done. If the brand also declares
+> `content.hero.pipeline`, use that brand-specific generator instead of the
+> generic `generate_hero.py` ladder (it typically generates, crops to the
+> brand's `content.hero.format`, and attaches in one step — so skip the
+> 1200x630 WebP normalisation in step 1a and the separate Phase 7.6 attach,
+> and honour the declared `format`). Example: `elliejames` builds Still Point
+> 600x403 covers via `qant/scripts/ej-hero-build.py --only <draft_id>` after
+> appending the article's `{id,label,scene}` to `scripts/ej-hero-prompts.json`.
+
 Steps:
 
-1. **Capability discovery + hero**: run `python scripts/blog_preflight.py --draft <folder> --gate 1` to enumerate available paths. If `nanobanana-mcp` is loaded, generate the hero via the MCP tool. Otherwise run `python scripts/generate_hero.py --topic "<title>" --tags "<tags>" --out <folder>` (uses the Gemini, Unsplash, Pexels, Pixabay, Openverse ladder).
+1. **Capability discovery + hero**: run `python scripts/blog_preflight.py --draft <folder> --gate 1` to enumerate available paths. If `nanobanana-mcp` is loaded, generate the hero via the MCP tool. Otherwise run `python scripts/generate_hero.py --topic "<title>" --tags "<tags>" --out <folder>` (uses the Gemini, Unsplash, Pexels, Pixabay, Openverse ladder). (Mandatory-hero brand with a declared `content.hero.pipeline`: run that pipeline instead.)
 
    **1a. Convert for blog use**: normalise the hero to 1200x630 WebP:
 
@@ -686,7 +701,7 @@ Steps:
    - Palette and tone fit the brand identity resolved in Phase 0.5.
    - Reads clearly at thumbnail size (the Axiom review sidebar shows it ~270px wide).
 
-   On failure: regenerate with a corrected prompt that names the specific defect ("no text overlays", "hands out of frame", …). **Maximum 2 regeneration retries.** After 2 failures, fall back to the stock-photo ladder and review that result against the same checklist. If stock also fails, proceed WITHOUT a hero and note it in the Phase 7 summary — never block the article on the image.
+   On failure: regenerate with a corrected prompt that names the specific defect ("no text overlays", "hands out of frame", …). **Maximum 2 regeneration retries.** After 2 failures, fall back to the stock-photo ladder and review that result against the same checklist. If stock also fails, proceed WITHOUT a hero and note it in the Phase 7 summary — never block the article on the image. **(Exception: mandatory-hero brands — `content.hero.required: true` — do NOT proceed without a hero. STOP and surface the failure per the Mandatory-hero override above.)**
 
 2. **Format completeness**: render the canonical `.md` to `.html` and `.pdf` via `python scripts/blog_render.py --md <slug>.md --out-dir <folder>`. All three artifacts plus `hero.<ext>` must end up in the draft folder.
 
@@ -838,11 +853,16 @@ python3 scripts/attach_draft_image.py \\
   the gate; a third failure means something is wrong with the source
   image — fall through to the failure handling below.
 - **No hero exists** (Phase 6.5 proceeded imageless): skip this phase
-  silently; Axiom shows "No image attached".
+  silently; Axiom shows "No image attached". **(Not allowed for
+  mandatory-hero brands — `content.hero.required: true` — which never
+  reach Phase 7 imageless; if somehow no hero exists, STOP and report it
+  rather than silently skipping.)**
 - **On any other failure**: warn and continue — the draft is already
   submitted and stands on its own. The operator can flag an image-only
   rewrite from Axiom to attach one later. NEVER fail the
-  submission over the image.
+  submission over the image. **(Exception: mandatory-hero brands — a
+  failed hero attach is a hard failure to surface, not a warning; the
+  draft is submitted but the article is NOT done until the hero lands.)**
 
 On success, include `images/hero` in the Phase 7 summary's draft_path
 line (e.g. `<draft_path> (+ images/hero)`).
