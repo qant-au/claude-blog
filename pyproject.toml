@@ -74,7 +74,7 @@ presentation = [
     # VULN-405 (v1.9.1): tighten google-genai floor from 0.5.0 (alpha) to
     # 1.0.0 (stable) to avoid pre-1.0 transport / auth churn.
     "patchright>=1.40,<2.0",
-    "weasyprint>=60.2,<65",
+    "weasyprint>=60.2,<71",
     "google-genai>=1.0.0,<2.0.0",
     "requests>=2.32.4,<3.0.0",
     "markdown>=3.5,<4.0",
